@@ -8,7 +8,9 @@ LINK_HOURS = 1
 
 
 def _owner_link_mode():
-    return os.environ.get("CUPOCHEESE_OWNER_LINK", "").strip() == "1"
+    if os.environ.get("CUPOCHEESE_OWNER_LINK", "").strip() == "1":
+        return True
+    return os.environ.get("CUPOCHEESE_SHOW_RESET_LINK", "").strip() == "1"
 
 def _public_base():
     u = os.environ.get("CUPOCHEESE_PUBLIC_URL", "").rstrip("/")
