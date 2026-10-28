@@ -56,12 +56,16 @@ def register():
     if request.method == "POST":
         username = request.form["username"].strip()
         password = request.form["password"]
+        password_confirm = request.form.get("password_confirm", "")
         invite = request.form.get("invite", "").strip()
         if invite != INVITE_CODE:
             flash("Signups are closed. You need an invite.")
             return redirect(url_for("register"))
         if not username or not password:
             flash("Username and password required")
+            return redirect(url_for("register"))
+        if password != password_confirm:
+            flash("Passwords must match")
             return redirect(url_for("register"))
         db = get_db()
         # First account only: if any users exist, block further signups even with the invite

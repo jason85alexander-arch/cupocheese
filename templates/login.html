@@ -4,10 +4,27 @@
 <div class="card">
     <h2>Log in to Cup O' Cheese</h2>
     <form method="post">
-        <input type="text" name="username" placeholder="Username" required>
-        <input type="password" name="password" placeholder="Password" required>
+        <input type="text" name="username" placeholder="Username" required autocomplete="username">
+        <div class="password-field">
+            <input type="password" name="password" id="login-password" placeholder="Password" required autocomplete="current-password">
+            <button type="button" class="toggle-password" data-target="login-password" aria-label="Show password">Show</button>
+        </div>
         <button type="submit">Log In</button>
     </form>
     <p>New here? <a href="{{ url_for('register') }}">Create an account</a></p>
 </div>
+<script>
+(function () {
+  document.querySelectorAll(".toggle-password").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var input = document.getElementById(btn.getAttribute("data-target"));
+      if (!input) return;
+      var showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      btn.textContent = showing ? "Show" : "Hide";
+      btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+    });
+  });
+})();
+</script>
 {% endblock %}
