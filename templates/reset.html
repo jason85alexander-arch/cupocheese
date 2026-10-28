@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Reset password - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Reset password</h2>
+    <p style="color:#7a6a55;font-size:14px;">Account: <strong>{{ username }}</strong></p>
+    <form method="post" id="reset-form">
+        <div class="password-field">
+            <input type="password" name="password" id="password" placeholder="New password" required autocomplete="new-password">
+            <button type="button" class="toggle-password" data-target="password" aria-label="Show password">Show</button>
+        </div>
+        <div class="password-field">
+            <input type="password" name="password_confirm" id="password_confirm" placeholder="Confirm new password" required autocomplete="new-password">
+            <button type="button" class="toggle-password" data-target="password_confirm" aria-label="Show password">Show</button>
+        </div>
+        <p id="password-mismatch" class="field-error" hidden>Passwords must match.</p>
+        <button type="submit">Update password</button>
+    </form>
+    <p><a href="{{ url_for('login') }}">Back to log in</a></p>
+</div>
+<script>
+(function () {
+  var form = document.getElementById("reset-form");
+  var password = document.getElementById("password");
+  var confirm = document.getElementById("password_confirm");
+  var mismatch = document.getElementById("password-mismatch");
+  function passwordsMatch() { return password.value === confirm.value; }
+  function updateMismatch() {
+    var bad = confirm.value.length > 0 && !passwordsMatch();
+    mismatch.hidden = !bad;
+    confirm.setCustomValidity(bad ? "Passwords must match." : "");
+  }
+  password.addEventListener("input", updateMismatch);
+  confirm.addEventListener("input", updateMismatch);
+  form.addEventListener("submit", function (e) {
+    updateMismatch();
+    if (!passwordsMatch()) { e.preventDefault(); mismatch.hidden = false; confirm.focus(); }
+  });
+  document.querySelectorAll(".toggle-password").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var input = document.getElementById(btn.getAttribute("data-target"));
+      if (!input) return;
+      var showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      btn.textContent = showing ? "Show" : "Hide";
+      btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+    });
+  });
+})();
+</script>
+{% endblock %}

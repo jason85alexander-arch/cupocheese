@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Forgot password - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Forgot password</h2>
+    <p style="color:#7a6a55;font-size:14px;">Passwords are hashed and cannot be looked up. Enter your username to get a one-time link.</p>
+    <form method="post">
+        <input type="text" name="username" placeholder="Username" required autocomplete="username">
+        <button type="submit">Send reset link</button>
+    </form>
+    {% if reset_link %}
+    <div class="flash" style="word-break:break-all;">
+        <strong>One-time link (1 hour):</strong><br>
+        <a href="{{ reset_link }}">{{ reset_link }}</a>
+    </div>
+    {% endif %}
+    <p><a href="{{ url_for('login') }}">Back to log in</a></p>
+</div>
+{% endblock %}

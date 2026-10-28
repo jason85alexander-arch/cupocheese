@@ -1,12 +1,16 @@
 import os
+import secrets
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
+import account_flow
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("CUPOCHEESE_SECRET", "cupocheese-dev-secret-change-me")
 DATABASE = "cupocheese.db"
+LINK_HOURS = 1
+
 
 def get_db():
     conn = sqlite3.connect(DATABASE)
@@ -19,10 +23,14 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
+                email TEXT UNIQUE,
                 password_hash TEXT NOT NULL,
                 created_at TEXT
             )
         """)
+        cols = {row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()}
+        if "email" not in cols:
+            db.execute("ALTER TABLE users ADD COLUMN email TEXT")
         db.execute("""
             CREATE TABLE IF NOT EXISTS posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,7 +40,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         """)
-        db.commit()
+        db.commit()  # schema ready
 
 @app.route("/")
 def index():
@@ -55,14 +63,18 @@ INVITE_CODE = os.environ.get("CUPOCHEESE_INVITE", "owner-only-cupocheese")
 def register():
     if request.method == "POST":
         username = request.form["username"].strip()
+        email = request.form.get("email", "").strip().lower()
         password = request.form["password"]
         password_confirm = request.form.get("password_confirm", "")
         invite = request.form.get("invite", "").strip()
         if invite != INVITE_CODE:
             flash("Signups are closed. You need an invite.")
             return redirect(url_for("register"))
-        if not username or not password:
-            flash("Username and password required")
+        if not username or not email or not password:
+            flash("Username, email, and password required")
+            return redirect(url_for("register"))
+        if "@" not in email or "." not in email.split("@")[-1]:
+            flash("Enter a valid email address")
             return redirect(url_for("register"))
         if password != password_confirm:
             flash("Passwords must match")
@@ -75,14 +87,17 @@ def register():
             return redirect(url_for("login"))
         try:
             db.execute(
-                "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
-                (username, generate_password_hash(password), datetime.utcnow().isoformat())
+                "INSERT INTO users (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                (username, email, generate_password_hash(password), datetime.utcnow().isoformat())
             )
             db.commit()
             flash("Account Created! Hike a leg and come on in!")
             return redirect(url_for("login"))
-        except sqlite3.IntegrityError:
-            flash("Username already taken")
+        except sqlite3.IntegrityError as e:
+            if "email" in str(e).lower():
+                flash("Email already registered")
+            else:
+                flash("Username already taken")
     return render_template("register.html")
 
 @app.route("/login", methods=["GET", "POST"])
@@ -119,6 +134,7 @@ def create_post():
     return redirect(url_for("index"))
 
 init_db()
+account_flow.register_routes(app, get_db)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
