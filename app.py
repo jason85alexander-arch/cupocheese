@@ -79,7 +79,7 @@ def register():
                 (username, generate_password_hash(password), datetime.utcnow().isoformat())
             )
             db.commit()
-            flash("Account created. Pour a cup and dig in.")
+            flash("Account Created! Hike a leg and come on in!")
             return redirect(url_for("login"))
         except sqlite3.IntegrityError:
             flash("Username already taken")
