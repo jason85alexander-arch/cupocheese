@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: cupocheese
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: CUPOCHEESE_SECRET
+        generateValue: true
+      - key: CUPOCHEESE_INVITE
+        value: owner-only-cupocheese

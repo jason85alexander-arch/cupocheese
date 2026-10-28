@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Feed - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <form action="{{ url_for('create_post') }}" method="post">
+        <textarea name="content" rows="3" placeholder="What's fermenting? Share a cup..." required></textarea>
+        <button type="submit">🧀 Post</button>
+    </form>
+</div>
+
+{% for post in posts %}
+<div class="card">
+    <div class="post-meta">
+        <strong>{{ post.username }}</strong> · {{ post.created_at[:16].replace('T', ' ') }}
+    </div>
+    <div>{{ post.content }}</div>
+</div>
+{% else %}
+<div class="card">
+    <p>No posts yet. Be the first to pour one out.</p>
+</div>
+{% endfor %}
+{% endblock %}

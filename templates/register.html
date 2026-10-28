@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Register - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Join Cup O' Cheese</h2>
+    <p style="color:#7a6a55;font-size:14px;">Signups are invite-only right now.</p>
+    <form method="post">
+        <input type="text" name="invite" placeholder="Invite code" required autocomplete="off">
+        <input type="text" name="username" placeholder="Choose a username" required>
+        <input type="password" name="password" placeholder="Password" required>
+        <button type="submit">Create Account</button>
+    </form>
+    <p>Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+</div>
+{% endblock %}
