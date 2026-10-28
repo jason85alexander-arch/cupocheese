@@ -12,7 +12,7 @@ app.secret_key = os.environ.get("CUPOCHEESE_SECRET", "cupocheese-dev-secret-chan
 DATABASE = "cupocheese.db"
 LINK_HOURS = 1
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
-MAX_AUDIO_BYTES = 5 * 1024 * 1024
+MAX_AUDIO_BYTES = 15 * 1024 * 1024
 ALLOWED_AUDIO_EXT = {".webm", ".ogg", ".mp4", ".m4a", ".wav", ".mp3"}
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_BYTES + 64 * 1024
@@ -22,6 +22,19 @@ def get_db():
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     return conn
+
+def require_user():
+    """Return user row or None; clears stale sessions after ephemeral DB wipe."""
+    uid = session.get("user_id")
+    if not uid:
+        return None
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    if not user:
+        session.clear()
+        return None
+    session["username"] = user["username"]
+    return user
 
 def init_db():
     with get_db() as db:
@@ -54,13 +67,14 @@ def init_db():
 
 @app.route("/")
 def index():
-    if "user_id" not in session:
+    if not require_user():
         return redirect(url_for("login"))
     db = get_db()
     posts = db.execute("""
-        SELECT posts.id, posts.content, posts.created_at, posts.audio_path, users.username
+        SELECT posts.id, posts.content, posts.created_at, posts.audio_path,
+               COALESCE(users.username, 'unknown') AS username
         FROM posts
-        JOIN users ON posts.user_id = users.id
+        LEFT JOIN users ON posts.user_id = users.id
         ORDER BY posts.created_at DESC
         LIMIT 50
     """).fetchall()
@@ -131,41 +145,71 @@ def logout():
 
 @app.route("/clip/<filename>")
 def serve_clip(filename):
-    if "user_id" not in session:
+    if not require_user():
         return redirect(url_for("login"))
     safe = secure_filename(filename)
     if not safe or safe != filename:
         return ("Not found", 404)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     return send_from_directory(UPLOAD_FOLDER, safe)
+
+
+@app.errorhandler(413)
+def too_large(_err):
+    flash("That clip is too large (max 15 MB). Try a shorter recording.")
+    return redirect(url_for("index"))
 
 
 @app.route("/post", methods=["POST"])
 def create_post():
-    if "user_id" not in session:
+    user = require_user()
+    if not user:
         return redirect(url_for("login"))
     content = request.form.get("content", "").strip()
     clip = request.files.get("audio")
     clip_name = None
-    if clip and clip.filename:
-        name = secure_filename(clip.filename)
-        ext = os.path.splitext(name)[1].lower() or ".webm"
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    if clip and getattr(clip, "filename", None):
+        raw_name = clip.filename or "clip.webm"
+        name = secure_filename(raw_name) or "clip.webm"
+        ext = os.path.splitext(name)[1].lower()
+        if not ext:
+            ctype = (clip.mimetype or "").lower()
+            if "ogg" in ctype:
+                ext = ".ogg"
+            elif "mp4" in ctype or "m4a" in ctype or "aac" in ctype:
+                ext = ".mp4"
+            elif "wav" in ctype:
+                ext = ".wav"
+            elif "mpeg" in ctype or "mp3" in ctype:
+                ext = ".mp3"
+            else:
+                ext = ".webm"
         if ext in ALLOWED_AUDIO_EXT:
             clip_name = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_" + secrets.token_hex(8) + ext
             dest = os.path.join(UPLOAD_FOLDER, clip_name)
-            clip.save(dest)
-            if os.path.getsize(dest) > MAX_AUDIO_BYTES:
-                os.remove(dest)
+            try:
+                clip.save(dest)
+                if os.path.getsize(dest) == 0 or os.path.getsize(dest) > MAX_AUDIO_BYTES:
+                    os.remove(dest)
+                    clip_name = None
+                    flash("Clip could not be saved (empty or too large).")
+            except OSError:
                 clip_name = None
+                flash("Could not store clip on server.")
+        else:
+            flash("Unsupported audio type. Try recording again.")
     if not content and not clip_name:
         flash("Add some text or a clip before posting.")
         return redirect(url_for("index"))
     db = get_db()
     db.execute(
         "INSERT INTO posts (user_id, content, created_at, audio_path) VALUES (?, ?, ?, ?)",
-        (session["user_id"], content, datetime.utcnow().isoformat(), clip_name),
+        (user["id"], content, datetime.utcnow().isoformat(), clip_name),
     )
     db.commit()
     return redirect(url_for("index"))
+
 
 init_db()
 account_flow.register_routes(app, get_db)

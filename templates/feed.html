@@ -8,7 +8,7 @@
         <div class="compose-bar">
             <button type="button" id="rec-btn" class="rec-btn" aria-pressed="false">Record</button>
             <span id="rec-status" class="rec-status" aria-live="polite"></span>
-            <button type="submit" class="post-btn" aria-label="Post">💨</button>
+            <button type="submit" class="post-btn" aria-label="Post" id="post-btn">💨</button>
         </div>
         <audio id="rec-preview" class="rec-preview" controls hidden></audio>
     </form>
@@ -37,12 +37,15 @@
   var content = document.getElementById("compose-content");
   var fileInput = document.getElementById("audio-file");
   var recBtn = document.getElementById("rec-btn");
+  var postBtn = document.getElementById("post-btn");
   var statusEl = document.getElementById("rec-status");
   var preview = document.getElementById("rec-preview");
   var recorder = null;
   var chunks = [];
   var stream = null;
-  var blob = null;
+  var recordedBlob = null;
+  var recordedMime = "";
+  var submitting = false;
 
   function setStatus(t) { statusEl.textContent = t || ""; }
 
@@ -63,21 +66,34 @@
     }
   }
 
+  function extFor(mime) {
+    mime = mime || "";
+    if (mime.indexOf("mp4") >= 0 || mime.indexOf("aac") >= 0) return "mp4";
+    if (mime.indexOf("ogg") >= 0) return "ogg";
+    if (mime.indexOf("wav") >= 0) return "wav";
+    return "webm";
+  }
+
   function attachBlob(b, mime) {
-    blob = b;
-    var ext = (mime || "").indexOf("mp4") >= 0 ? "mp4" : ((mime || "").indexOf("ogg") >= 0 ? "ogg" : "webm");
-    var file = new File([b], "clip." + ext, { type: mime || b.type || "audio/webm" });
-    var dt = new DataTransfer();
-    dt.items.add(file);
-    fileInput.files = dt.files;
+    recordedBlob = b;
+    recordedMime = mime || b.type || "audio/webm";
+    var ext = extFor(recordedMime);
+    var file = new File([b], "clip." + ext, { type: recordedMime });
+    try {
+      var dt = new DataTransfer();
+      dt.items.add(file);
+      fileInput.files = dt.files;
+    } catch (err) {
+      /* Safari / older browsers: FormData path below still works */
+    }
     preview.src = URL.createObjectURL(b);
     preview.hidden = false;
-    setStatus("Clip ready");
+    setStatus("Clip ready (" + Math.max(1, Math.round(b.size / 1024)) + " KB)");
   }
 
   async function startRec() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setStatus("Mic not supported");
+      setStatus("Mic not supported here");
       return;
     }
     try {
@@ -87,6 +103,7 @@
       return;
     }
     chunks = [];
+    recordedBlob = null;
     var mime = pickMime();
     try {
       recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
@@ -99,7 +116,7 @@
       if (ev.data && ev.data.size) chunks.push(ev.data);
     };
     recorder.onstop = function () {
-      var type = recorder.mimeType || mime || "audio/webm";
+      var type = (recorder && recorder.mimeType) || mime || "audio/webm";
       var b = new Blob(chunks, { type: type });
       stopTracks();
       recorder = null;
@@ -112,7 +129,7 @@
       }
       attachBlob(b, type);
     };
-    recorder.start();
+    recorder.start(250);
     recBtn.textContent = "Stop";
     recBtn.setAttribute("aria-pressed", "true");
     recBtn.classList.add("recording");
@@ -120,7 +137,10 @@
   }
 
   function stopRec() {
-    if (recorder && recorder.state !== "inactive") recorder.stop();
+    if (recorder && recorder.state !== "inactive") {
+      try { recorder.requestData(); } catch (e) {}
+      recorder.stop();
+    }
   }
 
   recBtn.addEventListener("click", function () {
@@ -129,13 +149,50 @@
   });
 
   form.addEventListener("submit", function (e) {
-    var hasText = content.value.trim().length > 0;
-    var hasAudio = fileInput.files && fileInput.files.length > 0;
-    if (!hasText && !hasAudio) {
-      e.preventDefault();
+    e.preventDefault();
+    if (submitting) return;
+    if (recorder && recorder.state === "recording") {
+      setStatus("Stop recording first");
+      return;
+    }
+    var text = content.value.trim();
+    var hasFile = fileInput.files && fileInput.files.length > 0;
+    var hasBlob = !!(recordedBlob && recordedBlob.size);
+    if (!text && !hasFile && !hasBlob) {
       setStatus("Add text or a clip");
       content.focus();
+      return;
     }
+    submitting = true;
+    postBtn.disabled = true;
+    setStatus("Posting…");
+
+    var fd = new FormData();
+    fd.append("content", text);
+    if (hasBlob) {
+      var ext = extFor(recordedMime);
+      fd.append("audio", recordedBlob, "clip." + ext);
+    } else if (hasFile) {
+      fd.append("audio", fileInput.files[0], fileInput.files[0].name || "clip.webm");
+    }
+
+    fetch(form.action, {
+      method: "POST",
+      body: fd,
+      credentials: "same-origin",
+      redirect: "follow"
+    }).then(function (res) {
+      if (!res.ok && res.status !== 302) {
+        throw new Error("HTTP " + res.status);
+      }
+      window.location.href = "/";
+    }).catch(function () {
+      submitting = false;
+      postBtn.disabled = false;
+      setStatus("Post failed — try again");
+      /* last resort: native multipart submit */
+      form.submit();
+    });
   });
 })();
 </script>
