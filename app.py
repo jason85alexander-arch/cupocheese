@@ -38,6 +38,32 @@ def require_user():
     session["username"] = user["username"]
     return user
 
+
+def _admin_usernames():
+    raw = os.environ.get("CUPOCHEESE_ADMINS", "") or ""
+    return {p.strip().lower() for p in raw.split(",") if p.strip()}
+
+
+def is_admin_user(user):
+    """True if DB flag set or username listed in CUPOCHEESE_ADMINS."""
+    if not user:
+        return False
+    try:
+        if int(user["is_admin"] or 0) == 1:
+            return True
+    except (KeyError, TypeError, ValueError):
+        pass
+    uname = (user["username"] or "").strip().lower()
+    return bool(uname) and uname in _admin_usernames()
+
+
+def can_delete_post(viewer, post_user_id):
+    if not viewer:
+        return False
+    if viewer["id"] == post_user_id:
+        return True
+    return is_admin_user(viewer)
+
 def init_db():
     with get_db() as db:
         db.execute("""
@@ -72,25 +98,53 @@ def init_db():
             ("top1_post_id", "INTEGER"),
             ("top2_post_id", "INTEGER"),
             ("top3_post_id", "INTEGER"),
+            ("is_admin", "INTEGER DEFAULT 0"),
         ):
             if col not in cols:
                 db.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
+        # Promote owner: first user (id=1) or sole remaining user if no admin yet
+        admin_n = db.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE COALESCE(is_admin, 0) = 1"
+        ).fetchone()["n"]
+        if admin_n == 0:
+            first = db.execute(
+                "SELECT id FROM users ORDER BY id ASC LIMIT 1"
+            ).fetchone()
+            if first:
+                db.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (first["id"],))
         db.commit()  # schema ready
 
 @app.route("/")
 def index():
-    if not require_user():
+    viewer = require_user()
+    if not viewer:
         return redirect(url_for("login"))
     db = get_db()
-    posts = db.execute("""
-        SELECT posts.id, posts.content, posts.created_at, posts.audio_path,
+    rows = db.execute("""
+        SELECT posts.id, posts.user_id, posts.content, posts.created_at, posts.audio_path,
                COALESCE(users.username, 'unknown') AS username
         FROM posts
         LEFT JOIN users ON posts.user_id = users.id
         ORDER BY posts.created_at DESC
         LIMIT 50
     """).fetchall()
-    return render_template("feed.html", posts=posts, username=session.get("username"))
+    posts = []
+    for row in rows:
+        posts.append({
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "content": row["content"],
+            "created_at": row["created_at"],
+            "audio_path": row["audio_path"],
+            "username": row["username"],
+            "can_delete": can_delete_post(viewer, row["user_id"]),
+        })
+    return render_template(
+        "feed.html",
+        posts=posts,
+        username=session.get("username"),
+        is_admin=is_admin_user(viewer),
+    )
 
 # Only you can create an account for now. Change this env var to rotate the invite.
 INVITE_CODE = os.environ.get("CUPOCHEESE_INVITE", "owner-only-cupocheese")
@@ -122,9 +176,10 @@ def register():
             flash("Signups are closed. Owner account already exists.")
             return redirect(url_for("login"))
         try:
+            # First account is the site owner / admin
             db.execute(
-                "INSERT INTO users (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
-                (username, email, generate_password_hash(password), datetime.utcnow().isoformat())
+                "INSERT INTO users (username, email, password_hash, created_at, is_admin) VALUES (?, ?, ?, ?, ?)",
+                (username, email, generate_password_hash(password), datetime.utcnow().isoformat(), 1)
             )
             db.commit()
             flash("Account Created! Hike a leg and come on in!")
@@ -228,6 +283,54 @@ def create_post():
     return redirect(url_for("index"))
 
 
+@app.route("/post/<int:post_id>/delete", methods=["POST"])
+def delete_post(post_id):
+    viewer = require_user()
+    if not viewer:
+        return redirect(url_for("login"))
+    db = get_db()
+    post = db.execute(
+        "SELECT id, user_id, audio_path FROM posts WHERE id = ?",
+        (post_id,),
+    ).fetchone()
+    if not post:
+        flash("That post is already gone.")
+        return redirect(url_for("index"))
+    if not can_delete_post(viewer, post["user_id"]):
+        flash("You can only delete your own posts.")
+        dest = request.referrer if request.referrer else url_for("index")
+        return redirect(dest)
+    audio = post["audio_path"]
+    # Clear any top-3 slots pointing at this post
+    db.execute(
+        "UPDATE users SET top1_post_id = NULL WHERE top1_post_id = ?",
+        (post_id,),
+    )
+    db.execute(
+        "UPDATE users SET top2_post_id = NULL WHERE top2_post_id = ?",
+        (post_id,),
+    )
+    db.execute(
+        "UPDATE users SET top3_post_id = NULL WHERE top3_post_id = ?",
+        (post_id,),
+    )
+    db.execute("DELETE FROM posts WHERE id = ?", (post_id,))
+    db.commit()
+    if audio:
+        path = os.path.join(UPLOAD_FOLDER, audio)
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    flash("Post deleted.")
+    dest = request.referrer if request.referrer else url_for("index")
+    # Avoid redirect loops back to the deleted post URL if any
+    if dest and f"/post/{post_id}" in dest:
+        dest = url_for("index")
+    return redirect(dest)
+
+
 def _parse_optional_post_id(raw):
     raw = (raw or "").strip()
     if not raw:
@@ -282,14 +385,25 @@ def user_profile(username):
     if not profile:
         flash("No member by that name.")
         return redirect(url_for("index"))
-    tops = _load_top_posts(db, profile)
+    tops_raw = _load_top_posts(db, profile)
     is_owner = viewer["id"] == profile["id"]
+    viewer_admin = is_admin_user(viewer)
+    tops = []
+    for post in tops_raw:
+        tops.append({
+            "id": post["id"],
+            "content": post["content"],
+            "created_at": post["created_at"],
+            "audio_path": post["audio_path"],
+            "can_delete": is_owner or viewer_admin,
+        })
     return render_template(
         "profile.html",
         profile=profile,
         tops=tops,
         is_owner=is_owner,
         username=session.get("username"),
+        is_admin=viewer_admin,
     )
 
 

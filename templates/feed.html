@@ -30,6 +30,12 @@
     {% if post.audio_path %}
     <audio class="post-audio" controls preload="none" src="{{ url_for('serve_clip', filename=post.audio_path) }}"></audio>
     {% endif %}
+    {% if post.can_delete %}
+    <form class="delete-form" action="{{ url_for('delete_post', post_id=post.id) }}" method="post"
+          onsubmit="return confirm('Delete this post?');">
+        <button type="submit" class="delete-btn" title="Delete post">🗑️ Delete</button>
+    </form>
+    {% endif %}
 </div>
 {% else %}
 <div class="card">
