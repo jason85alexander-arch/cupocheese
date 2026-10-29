@@ -145,6 +145,7 @@
         .people-meta { flex: 1; min-width: 0; }
         .people-name { font-size: 16px; }
 
+        .feed-heading { margin: 0 0 12px; }
         .board-list { list-style: none; padding: 0; margin: 16px 0 0; }
         .board-item { padding: 12px 0; border-top: 1px solid #f0e0c0; }
         .board-author { text-decoration: none; color: #2b2118; }
@@ -204,7 +205,7 @@
         </div>
         <nav class="sidebar-nav">
             {% if session.user_id %}
-                <a href="{{ url_for('index') }}" class="{% if ep == 'index' %}nav-active{% endif %}">Feed</a>
+                <a href="{{ url_for('index') }}" class="{% if ep == 'index' %}nav-active{% endif %}">The Back Draft</a>
                 <a href="{{ url_for('people') }}" class="{% if ep == 'people' %}nav-active{% endif %}">People</a>
                 <a href="{{ url_for('me') }}" class="{% if on_own_profile %}nav-active{% endif %}">{{ session.username }}</a>
                 <a href="{{ url_for('edit_profile') }}" class="{% if ep == 'edit_profile' %}nav-active{% endif %}">Edit profile</a>

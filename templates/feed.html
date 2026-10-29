@@ -1,6 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Feed - Cup O' Cheese{% endblock %}
+{% block title %}The Back Draft - Cup O' Cheese{% endblock %}
 {% block content %}
+<h1 class="profile-name feed-heading">💨 The Back Draft</h1>
 <div class="card">
     <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data" id="compose-form">
         <textarea name="content" id="compose-content" rows="3" placeholder="What's fermenting? Float a biscuit…"></textarea>
