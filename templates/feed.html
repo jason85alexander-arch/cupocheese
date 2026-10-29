@@ -17,7 +17,12 @@
 {% for post in posts %}
 <div class="card">
     <div class="post-meta">
-        <strong>{{ post.username }}</strong> · {{ post.created_at[:16].replace('T', ' ') }}
+        {% if post.username and post.username != 'unknown' %}
+        <strong><a href="{{ url_for('user_profile', username=post.username) }}">{{ post.username }}</a></strong>
+        {% else %}
+        <strong>{{ post.username }}</strong>
+        {% endif %}
+        · {{ post.created_at[:16].replace('T', ' ') }}
     </div>
     {% if post.content %}
     <div>{{ post.content }}</div>

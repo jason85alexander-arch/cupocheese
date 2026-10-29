@@ -37,6 +37,34 @@
         .compose-bar .post-btn { width: auto; flex: 0 0 auto; margin: 0; min-width: 52px; font-size: 22px; line-height: 1; padding: 8px 14px; }
         .compose-bar .rec-status { flex: 1; font-size: 13px; color: #7a6a55; }
         .rec-preview, .post-audio { width: 100%; margin-top: 8px; margin-bottom: 0; }
+
+        .avatar { border-radius: 50%; object-fit: cover; background: #f0e0c0; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
+        .avatar-lg { width: 88px; height: 88px; font-size: 40px; flex: 0 0 auto; }
+        .avatar-sm { width: 28px; height: 28px; font-size: 14px; vertical-align: middle; margin-right: 6px; }
+        .avatar-placeholder { border: 2px solid #e0d0b0; }
+        .profile-top { display: flex; gap: 16px; align-items: center; }
+        .profile-meta { flex: 1; min-width: 0; }
+        .profile-name { margin: 0 0 4px; font-size: 24px; }
+        .profile-sub { margin: 0 0 10px; color: #7a6a55; font-size: 14px; }
+        .section-title { margin: 0 0 12px; font-size: 18px; }
+        .muted { color: #7a6a55; font-size: 14px; }
+        .btn-secondary {
+            display: inline-block; width: auto; padding: 8px 14px; margin: 0;
+            background: #fff; color: #c47a12; border: 1px solid #c47a12;
+            border-radius: 6px; font-weight: bold; text-decoration: none; font-size: 14px;
+        }
+        .btn-secondary:hover { background: #fff8e7; }
+        .top-farts { list-style: none; padding: 0; margin: 0; }
+        .top-fart { display: flex; gap: 12px; padding: 12px 0; border-top: 1px solid #f0e0c0; }
+        .top-fart:first-child { border-top: none; padding-top: 0; }
+        .top-rank {
+            flex: 0 0 auto; width: 36px; height: 36px; border-radius: 50%;
+            background: #c47a12; color: #fff; font-weight: bold; font-size: 13px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .top-body { flex: 1; min-width: 0; }
+        select { width: 100%; padding: 12px; border: 1px solid #e0d0b0; border-radius: 6px; font-size: 16px; margin-bottom: 12px; background: #fff; }
+        .nav-links .nav-user { margin-left: 0; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -44,7 +72,8 @@
         <div class="logo">🧀 Cup O' Cheese</div>
         <div class="nav-links">
             {% if session.user_id %}
-                <span>{{ session.username }}</span>
+                <a class="nav-user" href="{{ url_for('me') }}">{{ session.username }}</a>
+                <a href="{{ url_for('edit_profile') }}">Profile</a>
                 <a href="{{ url_for('logout') }}">Logout</a>
             {% else %}
                 <a href="{{ url_for('login') }}">Login</a>

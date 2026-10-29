@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ profile.username }} - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card profile-header">
+    <div class="profile-top">
+        {% if profile.avatar_path %}
+        <img class="avatar avatar-lg" src="{{ url_for('serve_avatar', filename=profile.avatar_path) }}" alt="{{ profile.username }}">
+        {% else %}
+        <div class="avatar avatar-lg avatar-placeholder" aria-hidden="true">🧀</div>
+        {% endif %}
+        <div class="profile-meta">
+            <h1 class="profile-name">{{ profile.username }}</h1>
+            <p class="profile-sub">Member of the Cup · top shelf only</p>
+            {% if is_owner %}
+            <a class="btn-secondary" href="{{ url_for('edit_profile') }}">Edit profile</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2 class="section-title">Top 3 farts</h2>
+    {% if tops %}
+    <ol class="top-farts">
+        {% for post in tops %}
+        <li class="top-fart">
+            <span class="top-rank">#{{ loop.index }}</span>
+            <div class="top-body">
+                {% if post.content %}
+                <div>{{ post.content }}</div>
+                {% else %}
+                <div class="muted">(clip only)</div>
+                {% endif %}
+                <div class="post-meta">{{ post.created_at[:16].replace('T', ' ') }}</div>
+                {% if post.audio_path %}
+                <audio class="post-audio" controls preload="none" src="{{ url_for('serve_clip', filename=post.audio_path) }}"></audio>
+                {% endif %}
+            </div>
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p class="muted">{% if is_owner %}Pick your proudest three on Edit profile.{% else %}No top picks yet — still warming up.{% endif %}</p>
+    {% endif %}
+</div>
+{% endblock %}

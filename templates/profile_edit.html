@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Edit profile - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 class="profile-name" style="margin-top:0">Edit profile</h1>
+    <p class="muted">Upload a pic and crown your top three.</p>
+    <form action="{{ url_for('edit_profile') }}" method="post" enctype="multipart/form-data">
+        <div class="profile-top" style="margin-bottom:16px">
+            {% if profile.avatar_path %}
+            <img class="avatar avatar-lg" src="{{ url_for('serve_avatar', filename=profile.avatar_path) }}" alt="Current avatar">
+            {% else %}
+            <div class="avatar avatar-lg avatar-placeholder" aria-hidden="true">🧀</div>
+            {% endif %}
+            <div class="profile-meta">
+                <label for="avatar"><strong>Profile picture</strong></label>
+                <input type="file" id="avatar" name="avatar" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif">
+                <p class="muted" style="margin:0">jpeg / png / webp / gif · max 5 MB</p>
+            </div>
+        </div>
+
+        <h2 class="section-title">Top 3 farts</h2>
+        <p class="muted">Choose up to three of your own posts. Order matters: 1st is the crown.</p>
+
+        {% set selected = [profile.top1_post_id, profile.top2_post_id, profile.top3_post_id] %}
+        {% for slot in [1, 2, 3] %}
+        <label for="top{{ slot }}"><strong>#{{ slot }}</strong></label>
+        <select id="top{{ slot }}" name="top{{ slot }}">
+            <option value="">— none —</option>
+            {% for post in my_posts %}
+            <option value="{{ post.id }}" {% if selected[slot - 1] == post.id %}selected{% endif %}>
+                #{{ post.id }} · {{ post.created_at[:16].replace('T', ' ') }}{% if post.content %} — {{ post.content[:60] }}{% if post.content|length > 60 %}…{% endif %}{% elif post.audio_path %} — 🎙 clip{% endif %}
+            </option>
+            {% endfor %}
+        </select>
+        {% endfor %}
+
+        {% if not my_posts %}
+        <p class="muted">You have no posts yet. Float one on the feed first.</p>
+        {% endif %}
+
+        <button type="submit">Save profile</button>
+        <p style="text-align:center;margin:0">
+            <a href="{{ url_for('user_profile', username=profile.username) }}">Cancel</a>
+        </p>
+    </form>
+</div>
+{% endblock %}

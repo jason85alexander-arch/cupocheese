@@ -13,9 +13,11 @@ DATABASE = "cupocheese.db"
 LINK_HOURS = 1
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 MAX_AUDIO_BYTES = 15 * 1024 * 1024
+MAX_AVATAR_BYTES = 5 * 1024 * 1024
 ALLOWED_AUDIO_EXT = {".webm", ".ogg", ".mp4", ".m4a", ".wav", ".mp3"}
+ALLOWED_AVATAR_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_BYTES + 64 * 1024
+app.config["MAX_CONTENT_LENGTH"] = max(MAX_AUDIO_BYTES, MAX_AVATAR_BYTES) + 64 * 1024
 
 
 def get_db():
@@ -63,6 +65,16 @@ def init_db():
         post_cols = {row["name"] for row in db.execute("PRAGMA table_info(posts)").fetchall()}
         if "audio_path" not in post_cols:
             db.execute("ALTER TABLE posts ADD COLUMN audio_path TEXT")
+        # Profile fields (avatar + self-selected top 3 posts)
+        cols = {row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()}
+        for col, typ in (
+            ("avatar_path", "TEXT"),
+            ("top1_post_id", "INTEGER"),
+            ("top2_post_id", "INTEGER"),
+            ("top3_post_id", "INTEGER"),
+        ):
+            if col not in cols:
+                db.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
         db.commit()  # schema ready
 
 @app.route("/")
@@ -156,6 +168,11 @@ def serve_clip(filename):
 
 @app.errorhandler(413)
 def too_large(_err):
+    # Avatar edits and clip posts share the same limit; route flash by referrer path.
+    path = (request.path or "") + " " + (request.referrer or "")
+    if "profile" in path or "avatar" in path:
+        flash("That picture is too large (max 5 MB).")
+        return redirect(url_for("edit_profile"))
     flash("That clip is too large (max 15 MB). Try a shorter recording.")
     return redirect(url_for("index"))
 
@@ -209,6 +226,182 @@ def create_post():
     )
     db.commit()
     return redirect(url_for("index"))
+
+
+def _parse_optional_post_id(raw):
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _owned_post_id(db, user_id, post_id):
+    if post_id is None:
+        return None
+    row = db.execute(
+        "SELECT id FROM posts WHERE id = ? AND user_id = ?",
+        (post_id, user_id),
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def _load_top_posts(db, user_row):
+    """Return ordered list of existing top posts (skip deleted)."""
+    tops = []
+    for key in ("top1_post_id", "top2_post_id", "top3_post_id"):
+        pid = user_row[key] if key in user_row.keys() else None
+        if not pid:
+            continue
+        post = db.execute(
+            "SELECT id, content, created_at, audio_path FROM posts WHERE id = ? AND user_id = ?",
+            (pid, user_row["id"]),
+        ).fetchone()
+        if post:
+            tops.append(post)
+    return tops
+
+
+@app.route("/me")
+def me():
+    user = require_user()
+    if not user:
+        return redirect(url_for("login"))
+    return redirect(url_for("user_profile", username=user["username"]))
+
+
+@app.route("/u/<username>")
+def user_profile(username):
+    viewer = require_user()
+    if not viewer:
+        return redirect(url_for("login"))
+    db = get_db()
+    profile = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if not profile:
+        flash("No member by that name.")
+        return redirect(url_for("index"))
+    tops = _load_top_posts(db, profile)
+    is_owner = viewer["id"] == profile["id"]
+    return render_template(
+        "profile.html",
+        profile=profile,
+        tops=tops,
+        is_owner=is_owner,
+        username=session.get("username"),
+    )
+
+
+@app.route("/avatar/<filename>")
+def serve_avatar(filename):
+    if not require_user():
+        return redirect(url_for("login"))
+    safe = secure_filename(filename)
+    if not safe or safe != filename:
+        return ("Not found", 404)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    return send_from_directory(UPLOAD_FOLDER, safe)
+
+
+@app.route("/profile/edit", methods=["GET", "POST"])
+def edit_profile():
+    user = require_user()
+    if not user:
+        return redirect(url_for("login"))
+    db = get_db()
+    if request.method == "POST":
+        # Refresh user row for latest avatar / tops
+        user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        avatar = request.files.get("avatar")
+        new_avatar = None
+        if avatar and getattr(avatar, "filename", None):
+            raw_name = avatar.filename or "avatar.jpg"
+            name = secure_filename(raw_name) or "avatar.jpg"
+            ext = os.path.splitext(name)[1].lower()
+            if not ext:
+                ctype = (avatar.mimetype or "").lower()
+                if "png" in ctype:
+                    ext = ".png"
+                elif "webp" in ctype:
+                    ext = ".webp"
+                elif "gif" in ctype:
+                    ext = ".gif"
+                else:
+                    ext = ".jpg"
+            if ext not in ALLOWED_AVATAR_EXT:
+                flash("Avatar must be jpeg, png, webp, or gif.")
+                return redirect(url_for("edit_profile"))
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+            new_avatar = (
+                datetime.utcnow().strftime("%Y%m%d%H%M%S")
+                + "_av_"
+                + secrets.token_hex(8)
+                + ext
+            )
+            dest = os.path.join(UPLOAD_FOLDER, new_avatar)
+            try:
+                avatar.save(dest)
+                size = os.path.getsize(dest)
+                if size == 0 or size > MAX_AVATAR_BYTES:
+                    os.remove(dest)
+                    flash("Avatar could not be saved (empty or over 5 MB).")
+                    return redirect(url_for("edit_profile"))
+            except OSError:
+                flash("Could not store avatar on server.")
+                return redirect(url_for("edit_profile"))
+
+        # Ordered top 3 — ownership validated; blanks clear a slot
+        t1 = _owned_post_id(db, user["id"], _parse_optional_post_id(request.form.get("top1")))
+        t2 = _owned_post_id(db, user["id"], _parse_optional_post_id(request.form.get("top2")))
+        t3 = _owned_post_id(db, user["id"], _parse_optional_post_id(request.form.get("top3")))
+        # Deduplicate while preserving order (first pick wins)
+        seen = set()
+        ordered = []
+        for pid in (t1, t2, t3):
+            if pid is None:
+                ordered.append(None)
+            elif pid in seen:
+                ordered.append(None)
+            else:
+                seen.add(pid)
+                ordered.append(pid)
+        t1, t2, t3 = ordered
+
+        if new_avatar:
+            # Drop old avatar file if present
+            old = user["avatar_path"] if "avatar_path" in user.keys() else None
+            if old:
+                old_path = os.path.join(UPLOAD_FOLDER, old)
+                if os.path.isfile(old_path):
+                    try:
+                        os.remove(old_path)
+                    except OSError:
+                        pass
+            db.execute(
+                "UPDATE users SET avatar_path = ?, top1_post_id = ?, top2_post_id = ?, top3_post_id = ? WHERE id = ?",
+                (new_avatar, t1, t2, t3, user["id"]),
+            )
+        else:
+            db.execute(
+                "UPDATE users SET top1_post_id = ?, top2_post_id = ?, top3_post_id = ? WHERE id = ?",
+                (t1, t2, t3, user["id"]),
+            )
+        db.commit()
+        flash("Profile updated — looking sharp (and fragrant).")
+        return redirect(url_for("user_profile", username=user["username"]))
+
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+    my_posts = db.execute(
+        "SELECT id, content, created_at, audio_path FROM posts WHERE user_id = ? ORDER BY created_at DESC LIMIT 100",
+        (user["id"],),
+    ).fetchall()
+    return render_template(
+        "profile_edit.html",
+        profile=user,
+        my_posts=my_posts,
+        username=session.get("username"),
+    )
 
 
 init_db()
