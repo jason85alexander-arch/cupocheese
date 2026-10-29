@@ -20,6 +20,13 @@ DATABASE = os.path.join(DATA_DIR, "cupocheese.db")
 LINK_HOURS = 1
 UPLOAD_FOLDER = os.path.join(DATA_DIR, "uploads")
 MAX_AUDIO_BYTES = 15 * 1024 * 1024
+# 30-second clip cap. Server allows a little slack over the client's auto-stop.
+MAX_CLIP_SECONDS = 30
+CLIP_SECONDS_SLACK = 1.0
+# When duration can't be read (MediaRecorder webm usually has no duration header),
+# fall back to a byte ceiling sized for ~30s at generous bitrates (opus ~32-128 kbps, AAC ~128-256 kbps).
+UNKNOWN_DURATION_MAX_BYTES = int(1.5 * 1024 * 1024)
+CLIP_TOO_LONG_MSG = "Whoa, that's a long one! Keep it under 30 seconds."
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 POST_MAX_CHARS = 140
 MSG_TOO_LONG = f"Keep it under {POST_MAX_CHARS} characters — let the fart do the talking."
@@ -1005,6 +1012,19 @@ def can_delete_board_post(viewer, board_post):
     return is_admin_user(viewer)
 
 
+def clip_duration_seconds(path):
+    """Best-effort duration via mutagen (ogg/opus, mp4/m4a, mp3, wav). None if unknown (e.g. webm)."""
+    try:
+        import mutagen
+        f = mutagen.File(path)
+        length = float(f.info.length) if f is not None and getattr(f, "info", None) else 0.0
+    except Exception:
+        return None
+    if not length or length != length or length <= 0:  # 0/NaN -> unknown (e.g. fragmented mp4)
+        return None
+    return length
+
+
 def _save_audio_upload(clip, prefix="bd_"):
     """Save an uploaded audio clip into UPLOAD_FOLDER. Returns (filename|None, error|None)."""
     if not clip or not getattr(clip, "filename", None):
@@ -1034,6 +1054,12 @@ def _save_audio_upload(clip, prefix="bd_"):
         if size == 0 or size > MAX_AUDIO_BYTES:
             os.remove(dest)
             return None, "Clip could not be saved (empty or too large)."
+        secs = clip_duration_seconds(dest)
+        too_long = (secs > MAX_CLIP_SECONDS + CLIP_SECONDS_SLACK) if secs is not None \
+            else size > UNKNOWN_DURATION_MAX_BYTES
+        if too_long:
+            os.remove(dest)
+            return None, CLIP_TOO_LONG_MSG
     except OSError:
         return None, "Could not store clip on server."
     return clip_name, None

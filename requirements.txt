@@ -2,3 +2,4 @@ flask
 werkzeug
 gunicorn
 tzdata
+mutagen

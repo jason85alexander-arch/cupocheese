@@ -92,7 +92,8 @@
         .rx-opt { width: 36px !important; height: 36px; padding: 0; font-size: 20px; border-radius: 8px; border: 1px solid transparent; background: transparent; }
         .rx-opt:hover { background: #fff3d6; }
         .reaction-bar.rx-busy { opacity: .6; pointer-events: none; }
-        .compose-bar .rec-status { flex: 1; font-size: 13px; color: #7a6a55; }
+        .compose-bar .rec-status { flex: 1; font-size: 13px; color: #7a6a55; font-variant-numeric: tabular-nums; }
+        .clip-note { font-size: 12px; color: #9a8a75; margin-top: 6px; }
         .rec-preview, .post-audio { width: 100%; margin-top: 8px; margin-bottom: 0; }
 
         .avatar { border-radius: 50%; object-fit: cover; background: #f0e0c0; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -291,6 +292,43 @@
             .crop-stage { width: 200px; height: 200px; }
         }
     </style>
+<script>
+/* 30-second clip cap: shared recorder timer + chosen-file duration check. */
+window.CocClip = (function () {
+  var LIMIT = 30, FILE_SLACK = 0.5;
+  var TOO_LONG = "Whoa, that's a long one! Keep it under 30 seconds.";
+  function fmt(s) { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2); }
+  function startTimer(onTick, onLimit) {
+    var t0 = Date.now(), fired = false;
+    onTick(0, fmt(0) + " / " + fmt(LIMIT));
+    var id = setInterval(function () {
+      var el = (Date.now() - t0) / 1000;
+      if (el >= LIMIT) {
+        el = LIMIT;
+        if (!fired) { fired = true; clearInterval(id); onTick(el, fmt(el) + " / " + fmt(LIMIT)); onLimit(); return; }
+      }
+      onTick(el, fmt(el) + " / " + fmt(LIMIT));
+    }, 200);
+    return { stop: function () { clearInterval(id); return Math.min(LIMIT, (Date.now() - t0) / 1000); } };
+  }
+  /* cb(ok, seconds|null). Unknown duration (e.g. some webm) is allowed; the server double-checks. */
+  function checkFile(file, cb) {
+    if (!file) { cb(true, null); return; }
+    var url = URL.createObjectURL(file), a = new Audio(), done = false;
+    function finish(ok, d) { if (done) return; done = true; URL.revokeObjectURL(url); cb(ok, d); }
+    a.preload = "metadata";
+    a.addEventListener("loadedmetadata", function () {
+      var d = a.duration;
+      if (!isFinite(d) || isNaN(d) || d <= 0) { finish(true, null); return; }
+      finish(d <= LIMIT + FILE_SLACK, d);
+    });
+    a.addEventListener("error", function () { finish(true, null); });
+    setTimeout(function () { finish(true, null); }, 8000);
+    a.src = url;
+  }
+  return { LIMIT: LIMIT, TOO_LONG: TOO_LONG, fmt: fmt, startTimer: startTimer, checkFile: checkFile };
+})();
+</script>
 </head>
 <body>
 {% set ep = request.endpoint or '' %}

@@ -79,6 +79,7 @@
             <span id="board-rec-status" class="rec-status" aria-live="polite">{% if not is_admin %}Record a toot to post{% endif %}</span>
             <button type="submit" class="post-btn" aria-label="Post to board" id="board-post-btn"{% if not is_admin %} disabled title="Record a toot to post"{% endif %}>🧀</button>
         </div>
+        <div class="clip-note">🎙️ 30 seconds max</div>
         <audio id="board-rec-preview" class="rec-preview" controls hidden></audio>
     </form>
 
@@ -144,8 +145,9 @@
   var maxChars = parseInt(form.getAttribute("data-max"), 10) || 140;
   var countEl = document.getElementById("board-count");
   function setStatus(t) { statusEl.textContent = t || ""; }
+  var recTimer = null, fileOk = true, recSecs = 0;
   function hasClip() {
-    return !!(recordedBlob && recordedBlob.size) || !!(fileInput.files && fileInput.files.length > 0);
+    return !!(recordedBlob && recordedBlob.size) || !!(fileOk && fileInput.files && fileInput.files.length > 0);
   }
   function refreshState() {
     var n = content.value.length;
@@ -156,7 +158,19 @@
     postBtn.title = (requireAudio && !hasClip()) ? "Record a toot to post" : "";
   }
   content.addEventListener("input", refreshState);
-  fileInput.addEventListener("change", function () { refreshState(); if (hasClip()) setStatus("Clip ready"); });
+  fileInput.addEventListener("change", function () {
+    var f = fileInput.files && fileInput.files[0];
+    recordedBlob = null;
+    if (!f) { fileOk = true; refreshState(); return; }
+    fileOk = false; refreshState(); setStatus("Checking clip length…");
+    window.CocClip.checkFile(f, function (ok, secs) {
+      if (fileInput.files[0] !== f) return;
+      fileOk = ok;
+      if (!ok) { fileInput.value = ""; setStatus(window.CocClip.TOO_LONG); }
+      else setStatus("Clip ready" + (secs ? " (" + window.CocClip.fmt(Math.round(secs)) + ")" : ""));
+      refreshState();
+    });
+  });
   function pickMime() {
     var types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
     for (var i = 0; i < types.length; i++) {
@@ -180,9 +194,10 @@
       dt.items.add(new File([b], "clip." + extFor(recordedMime), { type: recordedMime }));
       fileInput.files = dt.files;
     } catch (err) {}
+    fileOk = true;
     preview.src = URL.createObjectURL(b);
     preview.hidden = false;
-    setStatus("Clip ready (" + Math.max(1, Math.round(b.size / 1024)) + " KB)");
+    setStatus("Clip ready (" + window.CocClip.fmt(Math.round(recSecs)) + ", " + Math.max(1, Math.round(b.size / 1024)) + " KB)");
     refreshState();
   }
   async function startRec() {
@@ -195,6 +210,7 @@
     catch (e) { stopTracks(); setStatus("Recorder failed"); return; }
     recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
     recorder.onstop = function () {
+      if (recTimer) { recSecs = recTimer.stop(); recTimer = null; }
       var type = (recorder && recorder.mimeType) || mime || "audio/webm";
       var b = new Blob(chunks, { type: type });
       stopTracks(); recorder = null;
@@ -204,7 +220,8 @@
     };
     recorder.start(250);
     recBtn.textContent = "Stop"; recBtn.setAttribute("aria-pressed", "true"); recBtn.classList.add("recording");
-    setStatus("Recording…");
+    recTimer = window.CocClip.startTimer(function (secs, label) { setStatus("Recording… " + label); },
+                                         function () { stopRec(); });
   }
   function stopRec() {
     if (recorder && recorder.state !== "inactive") { try { recorder.requestData(); } catch (e) {} recorder.stop(); }
