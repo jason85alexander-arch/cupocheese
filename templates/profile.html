@@ -59,7 +59,7 @@
 </div>
 <div class="card" id="board">
     <h2 class="section-title">🧀 Cheese Board</h2>
-    <p class="muted" style="margin-top:-6px">{% if is_owner %}Your board — friends leave their crumbs here.{% else %}Leave {{ profile.username }} a little something on their board.{% endif %}</p>
+    <p class="muted" style="margin-top:-6px">A place for friends to stink it up</p>
     <form action="{{ url_for('board_post', username=profile.username) }}" method="post" enctype="multipart/form-data" id="board-form">
         <textarea name="body" id="board-body" rows="2" maxlength="{{ board_max }}" placeholder="{% if is_owner %}Pin a note to your own board…{% else %}Say cheese to {{ profile.username }}…{% endif %}"></textarea>
         <input type="file" name="audio" id="board-audio" accept="audio/webm,audio/ogg,audio/mp4,audio/*,.webm,.ogg,.mp4,.m4a,.wav,.mp3" hidden>
@@ -111,7 +111,7 @@
         {% endfor %}
     </ul>
     {% else %}
-    <p class="muted">Board's bare — no crumbs yet. Be the first to leave a slice.</p>
+    <p class="muted">Board's bare! Be the first to drop a butt dumpling!</p>
     {% endif %}
 </div>
 
