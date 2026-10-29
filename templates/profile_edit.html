@@ -3,20 +3,27 @@
 {% block content %}
 <div class="card">
     <h1 class="profile-name" style="margin-top:0">Edit profile</h1>
-    <p class="muted">Upload a pic and crown your top three.</p>
-    <form action="{{ url_for('edit_profile') }}" method="post" enctype="multipart/form-data">
-        <div class="profile-top" style="margin-bottom:16px">
-            {% if profile.avatar_path %}
-            <img class="avatar avatar-lg" src="{{ url_for('serve_avatar', filename=profile.avatar_path) }}" alt="Current avatar">
-            {% else %}
-            <div class="avatar avatar-lg avatar-placeholder" aria-hidden="true">🧀</div>
-            {% endif %}
-            <div class="profile-meta">
-                <label for="avatar"><strong>Profile picture</strong></label>
-                <input type="file" id="avatar" name="avatar" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif">
-                <p class="muted" style="margin:0">jpeg / png / webp / gif · max 5 MB</p>
+    <p class="muted">Frame your mug in the circle, then crown your top three.</p>
+    <form id="profile-form" action="{{ url_for('edit_profile') }}" method="post" enctype="multipart/form-data">
+        <label for="avatar"><strong>Profile picture</strong></label>
+        <input type="file" id="avatar" name="avatar" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif">
+        <p class="muted" style="margin-top:-4px">jpeg / png / webp / gif · max 5 MB · drag to pan, slider to zoom</p>
+
+        <div class="crop-wrap" id="crop-wrap">
+            <p class="crop-hint" id="crop-hint">Choose a photo (or adjust your current one) inside the circle.</p>
+            <div class="crop-stage" id="crop-stage" aria-label="Avatar crop preview">
+                <div class="crop-empty" id="crop-empty">🧀</div>
+                <img id="crop-img" alt="" hidden>
+            </div>
+            <div class="crop-controls" id="crop-controls" hidden>
+                <label for="crop-zoom">Zoom</label>
+                <input type="range" id="crop-zoom" min="1" max="3" step="0.01" value="1">
+                <div class="crop-actions">
+                    <button type="button" id="crop-reset">Reset</button>
+                </div>
             </div>
         </div>
+        <canvas id="crop-canvas" width="512" height="512" hidden></canvas>
 
         <h2 class="section-title">Top 3 farts</h2>
         <p class="muted">Choose up to three of your own posts. Order matters: 1st is the crown.</p>
@@ -38,10 +45,238 @@
         <p class="muted">You have no posts yet. Float one on the feed first.</p>
         {% endif %}
 
-        <button type="submit">Save profile</button>
+        <button type="submit" id="save-profile">Save profile</button>
         <p style="text-align:center;margin:0">
             <a href="{{ url_for('user_profile', username=profile.username) }}">Cancel</a>
         </p>
     </form>
 </div>
+
+<script>
+(function () {
+  var STAGE = 240;
+  var OUT = 512;
+  var fileInput = document.getElementById("avatar");
+  var form = document.getElementById("profile-form");
+  var stage = document.getElementById("crop-stage");
+  var img = document.getElementById("crop-img");
+  var empty = document.getElementById("crop-empty");
+  var controls = document.getElementById("crop-controls");
+  var zoomEl = document.getElementById("crop-zoom");
+  var resetBtn = document.getElementById("crop-reset");
+  var canvas = document.getElementById("crop-canvas");
+  var hint = document.getElementById("crop-hint");
+  var existingUrl = {% if profile.avatar_path %}{{ url_for('serve_avatar', filename=profile.avatar_path)|tojson }}{% else %}null{% endif %};
+
+  var state = {
+    naturalW: 0,
+    naturalH: 0,
+    baseScale: 1,
+    zoom: 1,
+    ox: 0,
+    oy: 0,
+    dirty: false,
+    hasImage: false,
+    objectUrl: null
+  };
+
+  var drag = null;
+
+  function scale() {
+    return state.baseScale * state.zoom;
+  }
+
+  function applyTransform() {
+    if (!state.hasImage) return;
+    var s = scale();
+    img.style.width = state.naturalW * s + "px";
+    img.style.height = state.naturalH * s + "px";
+    img.style.transform = "translate(calc(-50% + " + state.ox + "px), calc(-50% + " + state.oy + "px))";
+  }
+
+  function clampOffset() {
+    var s = scale();
+    var halfW = (state.naturalW * s) / 2;
+    var halfH = (state.naturalH * s) / 2;
+    var maxX = Math.max(0, halfW - STAGE / 2);
+    var maxY = Math.max(0, halfH - STAGE / 2);
+    state.ox = Math.max(-maxX, Math.min(maxX, state.ox));
+    state.oy = Math.max(-maxY, Math.min(maxY, state.oy));
+  }
+
+  function showImage() {
+    empty.hidden = true;
+    img.hidden = false;
+    controls.hidden = false;
+    state.hasImage = true;
+    hint.textContent = "Drag to reposition · use Zoom to fill the circle";
+  }
+
+  function fitImage() {
+    state.baseScale = Math.max(STAGE / state.naturalW, STAGE / state.naturalH);
+    state.zoom = 1;
+    state.ox = 0;
+    state.oy = 0;
+    zoomEl.value = "1";
+    zoomEl.min = "1";
+    zoomEl.max = "3";
+    clampOffset();
+    applyTransform();
+  }
+
+  function loadFromUrl(url, markDirty) {
+    var probe = new Image();
+    probe.onload = function () {
+      state.naturalW = probe.naturalWidth;
+      state.naturalH = probe.naturalHeight;
+      img.src = url;
+      showImage();
+      fitImage();
+      state.dirty = !!markDirty;
+    };
+    probe.onerror = function () {
+      hint.textContent = "Could not load that image.";
+    };
+    probe.src = url;
+  }
+
+  function loadFile(file) {
+    if (!file || !file.type || file.type.indexOf("image/") !== 0) return;
+    if (state.objectUrl) {
+      try { URL.revokeObjectURL(state.objectUrl); } catch (e) {}
+    }
+    state.objectUrl = URL.createObjectURL(file);
+    loadFromUrl(state.objectUrl, true);
+  }
+
+  fileInput.addEventListener("change", function () {
+    var f = fileInput.files && fileInput.files[0];
+    if (f) loadFile(f);
+  });
+
+  zoomEl.addEventListener("input", function () {
+    if (!state.hasImage) return;
+    state.zoom = parseFloat(zoomEl.value) || 1;
+    clampOffset();
+    applyTransform();
+    state.dirty = true;
+  });
+
+  resetBtn.addEventListener("click", function () {
+    if (!state.hasImage) return;
+    fitImage();
+    state.dirty = true;
+  });
+
+  function pointerDown(e) {
+    if (!state.hasImage) return;
+    e.preventDefault();
+    var pt = e.touches ? e.touches[0] : e;
+    drag = { x: pt.clientX, y: pt.clientY, ox: state.ox, oy: state.oy };
+  }
+  function pointerMove(e) {
+    if (!drag) return;
+    e.preventDefault();
+    var pt = e.touches ? e.touches[0] : e;
+    state.ox = drag.ox + (pt.clientX - drag.x);
+    state.oy = drag.oy + (pt.clientY - drag.y);
+    clampOffset();
+    applyTransform();
+    state.dirty = true;
+  }
+  function pointerUp() { drag = null; }
+
+  stage.addEventListener("mousedown", pointerDown);
+  window.addEventListener("mousemove", pointerMove);
+  window.addEventListener("mouseup", pointerUp);
+  stage.addEventListener("touchstart", pointerDown, { passive: false });
+  window.addEventListener("touchmove", pointerMove, { passive: false });
+  window.addEventListener("touchend", pointerUp);
+
+  stage.addEventListener("wheel", function (e) {
+    if (!state.hasImage) return;
+    e.preventDefault();
+    var delta = e.deltaY > 0 ? -0.05 : 0.05;
+    state.zoom = Math.max(1, Math.min(3, state.zoom + delta));
+    zoomEl.value = String(state.zoom);
+    clampOffset();
+    applyTransform();
+    state.dirty = true;
+  }, { passive: false });
+
+  function exportBlob(cb) {
+    var ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, OUT, OUT);
+    ctx.fillStyle = "#f0e0c0";
+    ctx.fillRect(0, 0, OUT, OUT);
+    var s = scale();
+    var ratio = OUT / STAGE;
+    // Image is centered in stage, then offset by ox/oy (CSS pixels of the stage).
+    var drawW = state.naturalW * s * ratio;
+    var drawH = state.naturalH * s * ratio;
+    var dx = OUT / 2 + state.ox * ratio - drawW / 2;
+    var dy = OUT / 2 + state.oy * ratio - drawH / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(OUT / 2, OUT / 2, OUT / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(img, dx, dy, drawW, drawH);
+    ctx.restore();
+    if (canvas.toBlob) {
+      canvas.toBlob(function (blob) {
+        cb(blob || null);
+      }, "image/jpeg", 0.92);
+    } else {
+      var data = canvas.toDataURL("image/jpeg", 0.92);
+      var bin = atob(data.split(",")[1]);
+      var arr = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      cb(new Blob([arr], { type: "image/jpeg" }));
+    }
+  }
+
+  form.addEventListener("submit", function (e) {
+    if (!state.hasImage || !state.dirty) {
+      // No new/adjusted photo — clear file input so server leaves avatar alone.
+      try { fileInput.value = ""; } catch (err) {}
+      return;
+    }
+    e.preventDefault();
+    var btn = document.getElementById("save-profile");
+    if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+    exportBlob(function (blob) {
+      if (!blob) {
+        if (btn) { btn.disabled = false; btn.textContent = "Save profile"; }
+        alert("Could not crop that photo. Try another image.");
+        return;
+      }
+      try {
+        var dt = new DataTransfer();
+        dt.items.add(new File([blob], "avatar.jpg", { type: "image/jpeg" }));
+        fileInput.files = dt.files;
+      } catch (err) {
+        // Fallback: append via FormData fetch if DataTransfer unsupported
+        var fd = new FormData(form);
+        fd.set("avatar", blob, "avatar.jpg");
+        fetch(form.action, { method: "POST", body: fd, credentials: "same-origin" })
+          .then(function (res) {
+            if (res.redirected) { window.location = res.url; return; }
+            return res.text().then(function () { window.location = {{ url_for('me')|tojson }}; });
+          })
+          .catch(function () {
+            if (btn) { btn.disabled = false; btn.textContent = "Save profile"; }
+            alert("Upload failed. Try again.");
+          });
+        return;
+      }
+      form.submit();
+    });
+  });
+
+  if (existingUrl) {
+    loadFromUrl(existingUrl, false);
+  }
+})();
+</script>
 {% endblock %}

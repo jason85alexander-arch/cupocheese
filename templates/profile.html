@@ -2,11 +2,11 @@
 {% block title %}{{ profile.username }} - Cup O' Cheese{% endblock %}
 {% block content %}
 <div class="card profile-header">
-    <div class="profile-top">
+    <div class="profile-top profile-top-xl">
         {% if profile.avatar_path %}
-        <img class="avatar avatar-lg" src="{{ url_for('serve_avatar', filename=profile.avatar_path) }}" alt="{{ profile.username }}">
+        <img class="avatar avatar-xl" src="{{ url_for('serve_avatar', filename=profile.avatar_path) }}" alt="{{ profile.username }}">
         {% else %}
-        <div class="avatar avatar-lg avatar-placeholder" aria-hidden="true">🧀</div>
+        <div class="avatar avatar-xl avatar-placeholder" aria-hidden="true">🧀</div>
         {% endif %}
         <div class="profile-meta">
             <h1 class="profile-name">{{ profile.username }}</h1>

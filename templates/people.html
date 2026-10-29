@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}People - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 class="profile-name" style="margin-top:0">People</h1>
+    <p class="muted">The cup's invite-only crew. Peek a friend's profile.</p>
+</div>
+
+{% if members %}
+{% for m in members %}
+<div class="card people-row">
+    <a class="people-link" href="{{ url_for('user_profile', username=m.username) }}">
+        {% if m.avatar_path %}
+        <img class="avatar avatar-md" src="{{ url_for('serve_avatar', filename=m.avatar_path) }}" alt="">
+        {% else %}
+        <div class="avatar avatar-md avatar-placeholder" aria-hidden="true">🧀</div>
+        {% endif %}
+        <div class="people-meta">
+            <strong class="people-name">{{ m.username }}</strong>
+            {% if m.is_you %}
+            <span class="muted"> · that's you</span>
+            {% endif %}
+        </div>
+    </a>
+</div>
+{% endfor %}
+{% else %}
+<div class="card">
+    <p class="muted">No other members yet — lonely cheese is still cheese.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -11,7 +11,8 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("CUPOCHEESE_SECRET", "cupocheese-dev-secret-change-me")
 # Durable data root: on Render, CUPOCHEESE_DATA_DIR=/var/data (persistent disk).
 # Local/dev: unset → project directory (current behavior).
-DATA_DIR = os.environ.get("CUPOCHEESE_DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
+_fallback_dir = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.environ.get("CUPOCHEESE_DATA_DIR") or _fallback_dir
 DATABASE = os.path.join(DATA_DIR, "cupocheese.db")
 LINK_HOURS = 1
 UPLOAD_FOLDER = os.path.join(DATA_DIR, "uploads")
@@ -19,8 +20,16 @@ MAX_AUDIO_BYTES = 15 * 1024 * 1024
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 ALLOWED_AUDIO_EXT = {".webm", ".ogg", ".mp4", ".m4a", ".wav", ".mp3"}
 ALLOWED_AVATAR_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+except OSError:
+    # Disk not attached yet (e.g. /var/data before persistent disk) — use app dir.
+    DATA_DIR = _fallback_dir
+    DATABASE = os.path.join(DATA_DIR, "cupocheese.db")
+    UPLOAD_FOLDER = os.path.join(DATA_DIR, "uploads")
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["MAX_CONTENT_LENGTH"] = max(MAX_AUDIO_BYTES, MAX_AVATAR_BYTES) + 64 * 1024
 
 
@@ -460,6 +469,35 @@ def user_profile(username):
         is_owner=is_owner,
         username=session.get("username"),
         is_admin=viewer_admin,
+    )
+
+
+@app.route("/people")
+def people():
+    viewer = require_user()
+    if not viewer:
+        return redirect(url_for("login"))
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT id, username, avatar_path, created_at
+        FROM users
+        ORDER BY lower(username) ASC
+        """
+    ).fetchall()
+    members = []
+    for row in rows:
+        members.append({
+            "id": row["id"],
+            "username": row["username"],
+            "avatar_path": row["avatar_path"],
+            "created_at": row["created_at"],
+            "is_you": row["id"] == viewer["id"],
+        })
+    return render_template(
+        "people.html",
+        members=members,
+        username=session.get("username"),
     )
 
 
