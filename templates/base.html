@@ -253,6 +253,27 @@
         img, audio, video { max-width: 100%; }
         .post-audio { width: 100%; }
         .mobile-top { display: none; }
+        .invite-label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+        .invite-list { list-style: none; margin: 0; padding: 0; }
+        .invite-item { padding: 12px 0; border-top: 1px solid #f0e0c0; }
+        .invite-item:first-child { border-top: none; padding-top: 0; }
+        .invite-item.invite-new { background: #fff6dc; border-radius: 8px; padding: 10px; outline: 2px solid #e0a030; }
+        .invite-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
+        .invite-email { word-break: break-all; }
+        .invite-pill { font-size: 12px; font-weight: 700; border-radius: 999px; padding: 2px 9px; }
+        .invite-pending { background: #fde7b8; color: #8a5208; }
+        .invite-used { background: #dff3d8; color: #2f6b22; }
+        .invite-revoked { background: #f3dede; color: #8a2b2b; }
+        .invite-url { font-size: 13px; padding: 8px 10px; margin: 6px 0 8px; background: #fffaf0; font-family: ui-monospace, Menlo, monospace; }
+        .invite-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .invite-actions .btn-secondary, .admin-toggle .btn-secondary { cursor: pointer; }
+        .invite-revoke, .admin-toggle form { margin: 0; display: inline; }
+        .btn-secondary.btn-danger { color: #a33; border-color: #a33; }
+        .btn-secondary.btn-danger:hover { background: #fff0f0; }
+        .invite-ok { background: #fff3d6; border: 1px solid #e0a030; border-radius: 6px; padding: 8px 10px; font-size: 14px; }
+        .admin-toggle { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin-top: 10px; font-size: 13px; }
+        .people-row .admin-toggle { justify-content: flex-start; margin-top: 8px; padding-left: 60px; }
+        .admin-lock { color: #7a6a55; font-size: 13px; }
         @media (max-width: 720px) {
             html, body { overflow-x: hidden; }
             .app-shell { display: block; min-height: 100vh; }
@@ -270,6 +291,8 @@
                 box-shadow: 0 -2px 10px rgba(0,0,0,.15); z-index: 100;
             }
             .sidebar .logo, .sidebar-nav .nav-spacer, .sidebar-nav .nav-label { display: none; }
+            .sidebar-nav a.nav-desktop-only { display: none; }
+            .people-row .admin-toggle { padding-left: 0; }
             .sidebar-nav { flex-direction: row; gap: 2px; }
             .sidebar-nav a, .sidebar-nav .nav-muted {
                 flex: 1 1 0; min-width: 0; min-height: 56px;
@@ -347,6 +370,9 @@ window.CocClip = (function () {
                 <a href="{{ url_for('people') }}" class="{% if ep == 'people' %}nav-active{% endif %}"{% if ep == 'people' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👥</span><span class="nav-label">People</span><span class="nav-short" aria-hidden="true">People</span></a>
                 <a href="{{ url_for('notifications_page') }}" class="nav-notif{% if ep == 'notifications_page' %} nav-active{% endif %}"{% if ep == 'notifications_page' %} aria-current="page"{% endif %} aria-label="Notifications{% if unread_notifications %} ({{ unread_notifications }} unread){% endif %}"><span class="nav-ico" aria-hidden="true">🔔{% if unread_notifications %}<span class="notif-badge notif-badge-ico">{{ unread_notifications if unread_notifications < 100 else '99+' }}</span>{% endif %}</span><span class="nav-label">Notifications{% if unread_notifications %} <span class="notif-badge">{{ unread_notifications if unread_notifications < 100 else '99+' }}</span>{% endif %}</span><span class="nav-short" aria-hidden="true">Alerts</span></a>
                 <a href="{{ url_for('me') }}" class="{% if on_own_profile %}nav-active{% endif %}"{% if on_own_profile %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🧀</span><span class="nav-label">{{ session.username }}{{ admin_badge(session.username) }}</span><span class="nav-short" aria-hidden="true">Me</span></a>
+                {% if viewer_is_admin() %}
+                <a href="{{ url_for('invites_page') }}" class="nav-desktop-only{% if ep == 'invites_page' %} nav-active{% endif %}"{% if ep == 'invites_page' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🎟️</span><span class="nav-label">Invites</span><span class="nav-short" aria-hidden="true">Invites</span></a>
+                {% endif %}
                 <div class="nav-spacer" aria-hidden="true"></div>
                 <a class="nav-muted" href="{{ url_for('logout') }}"><span class="nav-ico" aria-hidden="true">🚪</span><span class="nav-label">Logout</span><span class="nav-short" aria-hidden="true">Logout</span></a>
             {% else %}

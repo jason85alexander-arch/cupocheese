@@ -108,7 +108,32 @@ def _inject_admin_badge():
         if uname and uname in _admin_name_set():
             return Markup(' <span class="admin-badge" title="Admin" aria-label="Admin">💩</span>')
         return ""
-    return {"admin_badge": admin_badge}
+    return {"admin_badge": admin_badge, "viewer_is_admin": _viewer_is_admin}
+
+
+def _viewer_is_admin():
+    """Is the signed-in viewer an admin? (fresh from DB each request)"""
+    cached = getattr(g, "_viewer_admin", None)
+    if cached is not None:
+        return cached
+    val = False
+    uid = session.get("user_id")
+    if uid:
+        try:
+            db = get_db()
+            row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+            db.close()
+            val = is_admin_user(row)
+        except sqlite3.Error:
+            val = False
+    g._viewer_admin = val
+    return val
+
+
+def owner_user_id(db):
+    """The site owner = the first account ever created (lowest id). Can't be demoted."""
+    row = db.execute("SELECT id FROM users ORDER BY id ASC LIMIT 1").fetchone()
+    return row["id"] if row else None
 
 
 def can_delete_post(viewer, post_user_id):
@@ -240,6 +265,20 @@ def init_db():
                 user_id INTEGER,
                 reaction_count INTEGER,
                 created_at TEXT
+            )
+        """)
+        # Admin-issued, single-use invites.
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS invites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                email TEXT,
+                created_by INTEGER,
+                created_at TEXT,
+                used_by INTEGER,
+                used_at TEXT,
+                revoked_by INTEGER,
+                revoked_at TEXT
             )
         """)
         db.commit()  # schema ready
@@ -639,54 +678,121 @@ def index():
         post_max=POST_MAX_CHARS,
     )
 
-# Only you can create an account for now. Change this env var to rotate the invite.
+# Bootstrap code: only works while the site has zero accounts (creates the owner/admin).
+# After that, new members need a single-use invite from an admin (see /invites).
 INVITE_CODE = os.environ.get("CUPOCHEESE_INVITE", "owner-only-cupocheese")
+
+
+def load_invite(db, code):
+    """Return the invite row if it exists (any state), else None."""
+    code = (code or "").strip()
+    if not code:
+        return None
+    return db.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone()
+
+
+def invite_status(row):
+    if not row:
+        return "invalid"
+    if row["revoked_at"]:
+        return "revoked"
+    if row["used_at"]:
+        return "used"
+    return "pending"
+
+
+INVITE_BAD_MSG = {
+    "invalid": "That invite code doesn't smell right. Ask an admin for a fresh one.",
+    "used": "That invite has already been used. Ask an admin for a fresh one.",
+    "revoked": "That invite was revoked. Ask an admin for a fresh one.",
+}
+
+
+@app.route("/join/<code>")
+def join(code):
+    return redirect(url_for("register", invite=code))
+
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
+    db = get_db()
     if request.method == "POST":
-        username = request.form["username"].strip()
+        username = request.form.get("username", "").strip()
         email = request.form.get("email", "").strip().lower()
-        password = request.form["password"]
+        password = request.form.get("password", "")
         password_confirm = request.form.get("password_confirm", "")
         invite = request.form.get("invite", "").strip()
-        if invite != INVITE_CODE:
-            flash("Signups are closed. You need an invite.")
-            return redirect(url_for("register"))
+        back = url_for("register", invite=invite) if invite else url_for("register")
+        user_count = db.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        inv = None
+        bootstrap = False
+        if user_count == 0 and invite == INVITE_CODE:
+            bootstrap = True  # very first account = owner/admin
+        else:
+            inv = load_invite(db, invite)
+            st = invite_status(inv)
+            if st != "pending":
+                flash(INVITE_BAD_MSG.get(st) if invite else "Signups are invite-only. You need an invite.")
+                return redirect(back)
         if not username or not email or not password:
             flash("Username, email, and password required")
-            return redirect(url_for("register"))
+            return redirect(back)
         if "@" not in email or "." not in email.split("@")[-1]:
             flash("Enter a valid email address")
-            return redirect(url_for("register"))
+            return redirect(back)
+        if inv is not None and inv["email"] and inv["email"].strip().lower() != email:
+            flash("This invite is for a different email address. Use the email it was sent to.")
+            return redirect(back)
         if password != password_confirm:
             flash("Passwords must match")
-            return redirect(url_for("register"))
-        db = get_db()
-        # First account only: if any users exist, block further signups even with the invite
-        existing = db.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
-        if existing >= 1:
-            flash("Signups are closed. Owner account already exists.")
-            return redirect(url_for("login"))
+            return redirect(back)
+        if db.execute("SELECT 1 FROM users WHERE lower(username) = lower(?)", (username,)).fetchone():
+            flash("Username already taken")
+            return redirect(back)
+        if db.execute("SELECT 1 FROM users WHERE lower(email) = lower(?)", (email,)).fetchone():
+            flash("Email already registered")
+            return redirect(back)
+        now = datetime.utcnow().isoformat()
         try:
-            # First account is the site owner / admin
-            db.execute(
+            cur = db.execute(
                 "INSERT INTO users (username, email, password_hash, created_at, is_admin) VALUES (?, ?, ?, ?, ?)",
-                (username, email, generate_password_hash(password), datetime.utcnow().isoformat(), 1)
+                (username, email, generate_password_hash(password), now, 1 if bootstrap else 0)
             )
+            new_id = cur.lastrowid
+            if inv is not None:
+                claimed = db.execute(
+                    "UPDATE invites SET used_by = ?, used_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL",
+                    (new_id, now, inv["id"]),
+                ).rowcount
+                if claimed != 1:
+                    db.rollback()
+                    flash(INVITE_BAD_MSG["used"])
+                    return redirect(back)
             db.commit()
-            new_user = db.execute("SELECT id, username FROM users WHERE username = ?", (username,)).fetchone()
-            session.clear()
-            session["user_id"] = new_user["id"]
-            session["username"] = new_user["username"]
-            flash("Account Created! Hike a leg and come on in!")
-            return redirect(url_for("welcome"))
         except sqlite3.IntegrityError as e:
+            db.rollback()
             if "email" in str(e).lower():
                 flash("Email already registered")
             else:
                 flash("Username already taken")
-    return render_template("register.html")
+            return redirect(back)
+        session.clear()
+        session["user_id"] = new_id
+        session["username"] = username
+        flash("Account Created! Hike a leg and come on in!")
+        return redirect(url_for("welcome"))
+    code = request.args.get("invite", "").strip()
+    inv = load_invite(db, code) if code else None
+    status = invite_status(inv) if code else None
+    if code and status != "pending" and code == INVITE_CODE:
+        status = None  # bootstrap code: don't advertise it as bad
+    return render_template(
+        "register.html",
+        invite_code=code,
+        invite_status=status,
+        invite_email=(inv["email"] if inv is not None and status == "pending" else "") or "",
+        invite_bad_msg=INVITE_BAD_MSG.get(status) if status and status != "pending" else None,
+    )
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -995,6 +1101,7 @@ def user_profile(username):
         is_owner=is_owner,
         username=session.get("username"),
         is_admin=viewer_admin,
+        admin=admin_info(db, profile, viewer) if viewer_admin else None,
         squeak_wins=award_count(db, profile["id"]),
     )
 
@@ -1179,18 +1286,22 @@ def people():
         ORDER BY lower(username) ASC
         """
     ).fetchall()
+    viewer_admin = is_admin_user(viewer)
     members = []
     for row in rows:
+        full = db.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
         members.append({
             "id": row["id"],
             "username": row["username"],
             "avatar_path": row["avatar_path"],
             "created_at": row["created_at"],
             "is_you": row["id"] == viewer["id"],
+            "admin": admin_info(db, full, viewer) if viewer_admin else None,
         })
     return render_template(
         "people.html",
         members=members,
+        viewer_admin=viewer_admin,
         username=session.get("username"),
     )
 
@@ -1307,6 +1418,140 @@ def edit_profile():
 
 
 
+# ---- Admin tools: invites + admin designation (admins only) ----
+def require_admin():
+    """Return (viewer, None) for admins, else (None, response)."""
+    viewer = require_user()
+    if not viewer:
+        return None, redirect(url_for("login"))
+    if not is_admin_user(viewer):
+        return None, (render_template("forbidden.html", username=session.get("username")), 403)
+    return viewer, None
+
+
+def _invite_url(code):
+    base = os.environ.get("CUPOCHEESE_PUBLIC_URL", "").rstrip("/") or request.url_root.rstrip("/")
+    # Render terminates TLS at its proxy; make shared links https.
+    if base.startswith("http://") and request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https":
+        base = "https://" + base[len("http://"):]
+    return base + url_for("join", code=code)
+
+
+@app.route("/invites", methods=["GET", "POST"])
+def invites_page():
+    viewer, resp = require_admin()
+    if resp:
+        return resp
+    db = get_db()
+    new_code = None
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        if email and ("@" not in email or "." not in email.split("@")[-1]):
+            flash("That email doesn't look right. Leave it blank for an open invite.")
+            return redirect(url_for("invites_page"))
+        if email and db.execute("SELECT 1 FROM users WHERE lower(email) = ?", (email,)).fetchone():
+            flash("Somebody with that email is already in the Cup.")
+            return redirect(url_for("invites_page"))
+        code = secrets.token_urlsafe(12)
+        db.execute(
+            "INSERT INTO invites (code, email, created_by, created_at) VALUES (?, ?, ?, ?)",
+            (code, email or None, viewer["id"], datetime.utcnow().isoformat()),
+        )
+        db.commit()
+        flash("Fresh invite baked! 🎟️ Copy the link and send it to your stinky friend.")
+        return redirect(url_for("invites_page", new=code))
+    new_code = request.args.get("new", "").strip() or None
+    rows = db.execute(
+        """
+        SELECT i.*, c.username AS creator_name, u.username AS used_name, r.username AS revoker_name
+        FROM invites i
+        LEFT JOIN users c ON c.id = i.created_by
+        LEFT JOIN users u ON u.id = i.used_by
+        LEFT JOIN users r ON r.id = i.revoked_by
+        ORDER BY i.id DESC
+        """
+    ).fetchall()
+    pending, done = [], []
+    for r in rows:
+        item = dict(r)
+        item["status"] = invite_status(r)
+        item["url"] = _invite_url(r["code"])
+        (pending if item["status"] == "pending" else done).append(item)
+    return render_template(
+        "invites.html",
+        pending=pending,
+        done=done,
+        new_code=new_code,
+        username=session.get("username"),
+    )
+
+
+@app.route("/invites/<int:invite_id>/revoke", methods=["POST"])
+def revoke_invite(invite_id):
+    viewer, resp = require_admin()
+    if resp:
+        return resp
+    db = get_db()
+    n = db.execute(
+        "UPDATE invites SET revoked_by = ?, revoked_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL",
+        (viewer["id"], datetime.utcnow().isoformat(), invite_id),
+    ).rowcount
+    db.commit()
+    flash("Invite revoked. That one's been flushed. 🚽" if n else "That invite was already used or revoked.")
+    return redirect(url_for("invites_page"))
+
+
+@app.route("/u/<username>/admin", methods=["POST"])
+def set_admin(username):
+    viewer, resp = require_admin()
+    if resp:
+        return resp
+    db = get_db()
+    target = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    back = request.form.get("next") or url_for("user_profile", username=username)
+    if not back.startswith("/"):
+        back = url_for("people")
+    if not target:
+        flash("No member by that name.")
+        return redirect(url_for("people"))
+    action = request.form.get("action", "")
+    if action == "grant":
+        db.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (target["id"],))
+        db.commit()
+        flash(f"{target['username']} is now an admin. 💩 Badge earned!")
+    elif action == "revoke":
+        if target["id"] == viewer["id"]:
+            flash("You can't remove your own admin status.")
+        elif target["id"] == owner_user_id(db):
+            flash("The owner's admin status can't be removed.")
+        elif (target["username"] or "").strip().lower() in _admin_usernames():
+            flash(f"{target['username']} is an admin via the CUPOCHEESE_ADMINS setting on Render. Remove them there.")
+        else:
+            db.execute("UPDATE users SET is_admin = 0 WHERE id = ?", (target["id"],))
+            db.commit()
+            flash(f"{target['username']} is no longer an admin.")
+    else:
+        flash("Unknown action.")
+    return redirect(back)
+
+
+def admin_info(db, user_row, viewer):
+    """How a member's admin status is set, for admin-only controls."""
+    env_admin = (user_row["username"] or "").strip().lower() in _admin_usernames()
+    db_admin = int(user_row["is_admin"] or 0) == 1
+    is_owner = user_row["id"] == owner_user_id(db)
+    is_self = viewer is not None and user_row["id"] == viewer["id"]
+    return {
+        "is_admin": env_admin or db_admin,
+        "env_admin": env_admin,
+        "db_admin": db_admin,
+        "is_owner": is_owner,
+        "is_self": is_self,
+        "can_grant": not (env_admin or db_admin),
+        "can_revoke": db_admin and not env_admin and not is_owner and not is_self,
+    }
+
+
 # ---- PWA: manifest, service worker (root scope), offline fallback ----
 THEME_COLOR = "#c47a12"
 BG_COLOR = "#fff8e7"
@@ -1350,6 +1595,23 @@ def offline():
 
 init_db()
 account_flow.register_routes(app, get_db)
+
+
+def _log_admins():
+    try:
+        db = get_db()
+        names = [r["username"] for r in db.execute(
+            "SELECT username FROM users WHERE COALESCE(is_admin, 0) = 1 ORDER BY id")]
+        owner = db.execute("SELECT username FROM users ORDER BY id LIMIT 1").fetchone()
+        n = db.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        db.close()
+        print(f"[cupocheese] users={n} owner={owner['username'] if owner else None} "
+              f"db_admins={names} env_admins={sorted(_admin_usernames())}", flush=True)
+    except Exception as e:  # never block startup
+        print(f"[cupocheese] admin log failed: {e}", flush=True)
+
+
+_log_admins()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))

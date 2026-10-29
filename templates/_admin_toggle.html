@@ -1,0 +1,24 @@
+{# Admin-only control. Expects `a` (admin_info dict), `m.username`, `next_url`. #}
+<div class="admin-toggle">
+    {% if a.is_admin %}
+        {% if a.is_owner %}<span class="admin-lock">👑 Owner · admin for life</span>
+        {% elif a.env_admin %}<span class="admin-lock">🔒 Admin via CUPOCHEESE_ADMINS (change on Render)</span>
+        {% elif a.is_self %}<span class="admin-lock">💩 You're an admin (can't remove yourself)</span>
+        {% endif %}
+        {% if a.can_revoke %}
+        <form method="post" action="{{ url_for('set_admin', username=m.username) }}"
+              data-confirm="Remove admin from {{ m.username }}? They lose the 💩 badge, pinning, deleting, and inviting." onsubmit="return confirm(this.dataset.confirm);">
+            <input type="hidden" name="action" value="revoke">
+            <input type="hidden" name="next" value="{{ next_url }}">
+            <button type="submit" class="btn-secondary btn-danger">Remove admin</button>
+        </form>
+        {% endif %}
+    {% elif a.can_grant %}
+        <form method="post" action="{{ url_for('set_admin', username=m.username) }}"
+              data-confirm="Make {{ m.username }} an admin? They get the 💩 badge and can pin, delete posts, send invites, and make other admins." onsubmit="return confirm(this.dataset.confirm);">
+            <input type="hidden" name="action" value="grant">
+            <input type="hidden" name="next" value="{{ next_url }}">
+            <button type="submit" class="btn-secondary">💩 Make admin</button>
+        </form>
+    {% endif %}
+</div>

@@ -4,6 +4,9 @@
 <div class="card">
     <h1 class="profile-name" style="margin-top:0">People</h1>
     <p class="muted">The cup's invite-only crew. Peek a friend's profile.</p>
+    {% if viewer_admin %}
+    <a class="btn-secondary" href="{{ url_for('invites_page') }}">🎟️ Invite someone</a>
+    {% endif %}
 </div>
 
 {% if members %}
@@ -22,6 +25,7 @@
             {% endif %}
         </div>
     </a>
+    {% if m.admin %}{% set a = m.admin %}{% set next_url = url_for('people') %}{% include "_admin_toggle.html" %}{% endif %}
 </div>
 {% endfor %}
 {% else %}

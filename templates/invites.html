@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Invites - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 class="profile-name" style="margin-top:0">🎟️ Invites</h1>
+    <p class="muted">Admins only. Each invite works once. Send the link to someone worthy of the Cup.</p>
+    <form method="post" class="invite-form">
+        <label for="invite-email" class="invite-label">Email (optional)</label>
+        <input type="email" id="invite-email" name="email" placeholder="friend@example.com — or leave blank" autocomplete="off">
+        <p class="clip-note" style="margin-top:-6px;">With an email, only that address can use the invite. Blank = anyone with the link.</p>
+        <button type="submit">🎟️ Make an invite</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2 class="section-title">Waiting to be used ({{ pending|length }})</h2>
+    {% if pending %}
+    <ul class="invite-list">
+        {% for inv in pending %}
+        <li class="invite-item{% if inv.code == new_code %} invite-new{% endif %}" id="invite-{{ inv.id }}">
+            <div class="invite-head">
+                <span class="invite-pill invite-pending">Pending</span>
+                {% if inv.email %}<strong class="invite-email">{{ inv.email }}</strong>{% else %}<span class="muted">Open invite (anyone with the link)</span>{% endif %}
+            </div>
+            <div class="post-meta">Made by {{ inv.creator_name or 'someone' }}{{ admin_badge(inv.creator_name) }} · {{ inv.created_at|ct_time }}</div>
+            <input class="invite-url" type="text" readonly value="{{ inv.url }}" aria-label="Invite link" onclick="this.select()">
+            <div class="invite-actions">
+                <button type="button" class="btn-secondary invite-copy" data-url="{{ inv.url }}">📋 Copy link</button>
+                <button type="button" class="btn-secondary invite-share" data-url="{{ inv.url }}" hidden>📲 Share</button>
+                <a class="btn-secondary" href="mailto:{{ inv.email or '' }}?subject={{ "You're invited to Cup O' Cheese 🧀" | urlencode }}&body={{ ("You've been invited to Cup O' Cheese, the invite-only home of fun fart activity. Hike a leg and come on in:\n\n" ~ inv.url ~ "\n\nThis link works once. #KIFKIFR") | urlencode }}">✉️ Email</a>
+                <form method="post" action="{{ url_for('revoke_invite', invite_id=inv.id) }}" class="invite-revoke"
+                      onsubmit="return confirm('Revoke this invite? The link will stop working.');">
+                    <button type="submit" class="btn-secondary btn-danger">🚽 Revoke</button>
+                </form>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No pending invites. Make one above.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2 class="section-title">Used &amp; revoked ({{ done|length }})</h2>
+    {% if done %}
+    <ul class="invite-list">
+        {% for inv in done %}
+        <li class="invite-item">
+            <div class="invite-head">
+                {% if inv.status == 'used' %}<span class="invite-pill invite-used">Used</span>{% else %}<span class="invite-pill invite-revoked">Revoked</span>{% endif %}
+                {% if inv.email %}<strong class="invite-email">{{ inv.email }}</strong>{% else %}<span class="muted">Open invite</span>{% endif %}
+            </div>
+            <div class="post-meta">Made by {{ inv.creator_name or 'someone' }}{{ admin_badge(inv.creator_name) }} · {{ inv.created_at|ct_time }}</div>
+            {% if inv.status == 'used' %}
+            <div class="post-meta">Used by {% if inv.used_name %}<a href="{{ url_for('user_profile', username=inv.used_name) }}">{{ inv.used_name }}</a>{{ admin_badge(inv.used_name) }}{% else %}a deleted member{% endif %} · {{ inv.used_at|ct_time }}</div>
+            {% else %}
+            <div class="post-meta">Revoked by {{ inv.revoker_name or 'someone' }} · {{ inv.revoked_at|ct_time }}</div>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">Nothing here yet.</p>
+    {% endif %}
+</div>
+<p class="clip-note" style="text-align:center;">Email opens your own mail app with the invite filled in. The site doesn't send mail itself.</p>
+<script>
+(function () {
+  function flashBtn(btn, txt) {
+    var old = btn.textContent; btn.textContent = txt;
+    setTimeout(function () { btn.textContent = old; }, 1600);
+  }
+  document.querySelectorAll(".invite-copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var url = btn.getAttribute("data-url");
+      var done = function () { flashBtn(btn, "✅ Copied!"); };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(url).then(done, function () { fallback(); });
+      } else { fallback(); }
+      function fallback() {
+        var input = btn.closest(".invite-item").querySelector(".invite-url");
+        input.select(); input.setSelectionRange(0, 99999);
+        try { document.execCommand("copy"); done(); } catch (e) { flashBtn(btn, "Select & copy"); }
+      }
+    });
+  });
+  if (navigator.share) {
+    document.querySelectorAll(".invite-share").forEach(function (btn) {
+      btn.hidden = false;
+      btn.addEventListener("click", function () {
+        navigator.share({ title: "Cup O' Cheese invite", text: "You're invited to Cup O' Cheese 🧀 This link works once:", url: btn.getAttribute("data-url") }).catch(function () {});
+      });
+    });
+  }
+})();
+</script>
+{% endblock %}

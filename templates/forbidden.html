@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Admins only - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card" style="text-align:center;">
+    <h1 class="profile-name" style="margin-top:0">🚫💩 Admins only</h1>
+    <p class="muted">That room's for admins. Nothing to sniff here.</p>
+    <a class="btn-secondary" href="{{ url_for('index') }}">Back to The Back Draft</a>
+</div>
+{% endblock %}

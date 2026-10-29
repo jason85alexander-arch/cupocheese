@@ -3,11 +3,25 @@
 {% block content %}
 <div class="card">
     <h2>Join Cup O' Cheese</h2>
-    <p style="color:#7a6a55;font-size:14px;">Signups are invite-only right now.</p>
-    <form method="post" id="register-form">
-        <input type="text" name="invite" placeholder="Invite code" required autocomplete="off">
+    {% if invite_status == 'pending' %}
+    <p class="invite-ok">🎟️ Your invite is good! Pick a username and you're in.</p>
+    {% elif invite_bad_msg %}
+    <p class="field-error" style="margin:0 0 12px;">{{ invite_bad_msg }}</p>
+    {% else %}
+    <p style="color:#7a6a55;font-size:14px;">Signups are invite-only right now. Got an invite link? Just open it.</p>
+    {% endif %}
+    <form method="post" id="register-form" action="{{ url_for('register') }}">
+        {% if invite_status == 'pending' %}
+        <input type="hidden" name="invite" value="{{ invite_code }}">
+        {% else %}
+        <input type="text" name="invite" placeholder="Invite code" required autocomplete="off" value="{{ invite_code or '' }}">
+        {% endif %}
         <input type="text" name="username" placeholder="Choose a username" required autocomplete="username">
+        {% if invite_email %}
+        <input type="email" name="email" value="{{ invite_email }}" readonly required autocomplete="email" aria-label="Email (set by your invite)">
+        {% else %}
         <input type="email" name="email" placeholder="Email" required autocomplete="email">
+        {% endif %}
         <div class="password-field">
             <input type="password" name="password" id="password" placeholder="Password" required autocomplete="new-password">
             <button type="button" class="toggle-password" data-target="password" aria-label="Show password">Show</button>
