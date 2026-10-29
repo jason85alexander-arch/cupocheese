@@ -283,7 +283,7 @@ def init_db():
         """)
         db.commit()  # schema ready
 
-REACTION_EMOJIS = ["😷", "☠️", "🦨", "🎺", "🚀", "😂", "👏", "🏆", "🫡", "🤌", "🐐", "😒"]
+REACTION_EMOJIS = ["😷", "☠️", "🦨", "🎺", "🚀", "😂", "👏", "🏆", "🫡", "🤌", "🐐", "👀"]
 REACTION_TARGETS = {"post": "posts", "board": "board_posts"}
 
 
