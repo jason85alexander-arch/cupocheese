@@ -6,7 +6,8 @@ import json
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import account_flow
 
 app = Flask(__name__)
@@ -197,6 +198,37 @@ def init_db():
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_reactions_target ON reactions (target_type, target_id)"
         )
+        # In-app notifications (no email/push).
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                actor_id INTEGER,
+                kind TEXT NOT NULL,
+                target_type TEXT,
+                target_id INTEGER,
+                emoji TEXT,
+                created_at TEXT,
+                read_at TEXT
+            )
+        """)
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, read_at)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notifications_target ON notifications (target_type, target_id)"
+        )
+        # Cheek Squeak O' the Week: one row per completed week that had a winner.
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS awards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                week_start TEXT NOT NULL UNIQUE,
+                post_id INTEGER,
+                user_id INTEGER,
+                reaction_count INTEGER,
+                created_at TEXT
+            )
+        """)
         db.commit()  # schema ready
 
 REACTION_EMOJIS = ["😷", "☠️", "🦨", "🎺", "🚀", "😂", "👏", "🏆", "🫡", "🤌", "🐐"]
@@ -246,6 +278,142 @@ def load_reactions(db, kind, ids, viewer_id):
 
 def delete_reactions(db, kind, target_id):
     db.execute("DELETE FROM reactions WHERE target_type = ? AND target_id = ?", (kind, target_id))
+    delete_target_notifications(db, kind, target_id)
+
+
+# ---------------- Notifications ----------------
+NOTIFY_KEEP = 100
+
+
+def notify(db, recipient_id, actor_id, kind, target_type=None, target_id=None, emoji=None):
+    """Create an in-app notification. Never notifies yourself."""
+    if recipient_id is None:
+        return
+    if actor_id is not None and int(actor_id) == int(recipient_id):
+        return
+    db.execute(
+        "INSERT INTO notifications (user_id, actor_id, kind, target_type, target_id, emoji, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (recipient_id, actor_id, kind, target_type, target_id, emoji, _now_utc().isoformat()),
+    )
+    prune_notifications(db, recipient_id)
+
+
+def prune_notifications(db, user_id, keep=NOTIFY_KEEP):
+    db.execute(
+        "DELETE FROM notifications WHERE user_id = ? AND id NOT IN "
+        "(SELECT id FROM notifications WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?)",
+        (user_id, user_id, keep),
+    )
+
+
+def delete_target_notifications(db, target_type, target_id):
+    db.execute(
+        "DELETE FROM notifications WHERE target_type = ? AND target_id = ?",
+        (target_type, target_id),
+    )
+
+
+def unread_notification_count(user_id):
+    if not user_id:
+        return 0
+    if "_unread_n" in g:
+        return g._unread_n
+    try:
+        n = get_db().execute(
+            "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read_at IS NULL", (user_id,)
+        ).fetchone()[0]
+    except sqlite3.Error:
+        n = 0
+    g._unread_n = n
+    return n
+
+
+@app.context_processor
+def _inject_notifications():
+    return {"unread_notifications": unread_notification_count(session.get("user_id"))}
+
+
+# ---------------- Cheek Squeak O' the Week ----------------
+CENTRAL = ZoneInfo("America/Chicago")
+
+
+def _now_utc():
+    """Naive UTC now (matches stored created_at). Tests may monkeypatch this."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def week_bounds(now_utc=None, weeks_back=0):
+    """Return (week_start_date_ct, start_utc_naive, end_utc_naive) for a Mon-Sun Central week.
+
+    weeks_back=0 is the current (in-progress) week, 1 is the most recent completed week.
+    """
+    now_utc = now_utc or _now_utc()
+    now_ct = now_utc.replace(tzinfo=timezone.utc).astimezone(CENTRAL)
+    monday = (now_ct - timedelta(days=now_ct.weekday())).date() - timedelta(weeks=weeks_back)
+    start_ct = datetime(monday.year, monday.month, monday.day, tzinfo=CENTRAL)
+    nxt = monday + timedelta(days=7)
+    end_ct = datetime(nxt.year, nxt.month, nxt.day, tzinfo=CENTRAL)
+    to_utc = lambda d: d.astimezone(timezone.utc).replace(tzinfo=None)
+    return monday, to_utc(start_ct), to_utc(end_ct)
+
+
+def top_post_between(db, start_utc, end_utc):
+    """Feed post created in [start, end) with most reactions; ties -> most distinct reactors, then earliest."""
+    return db.execute(
+        """
+        SELECT p.id, p.user_id, p.created_at, COUNT(r.id) AS n, COUNT(DISTINCT r.user_id) AS d
+        FROM posts p
+        JOIN reactions r ON r.target_type = 'post' AND r.target_id = p.id
+        WHERE p.created_at >= ? AND p.created_at < ?
+        GROUP BY p.id
+        HAVING COUNT(r.id) >= 1
+        ORDER BY n DESC, d DESC, p.created_at ASC, p.id ASC
+        LIMIT 1
+        """,
+        (start_utc.isoformat(), end_utc.isoformat()),
+    ).fetchone()
+
+
+def ensure_weekly_award(db, now_utc=None):
+    """Lazily decide last completed week's winner (idempotent). Returns the award row or None."""
+    week_start, start, end = week_bounds(now_utc, weeks_back=1)
+    key = week_start.isoformat()
+    row = db.execute("SELECT * FROM awards WHERE week_start = ?", (key,)).fetchone()
+    if row:
+        return row
+    win = top_post_between(db, start, end)
+    if not win:
+        return None  # nobody reacted; re-checked cheaply on later requests
+    cur = db.execute(
+        "INSERT OR IGNORE INTO awards (week_start, post_id, user_id, reaction_count, created_at) VALUES (?, ?, ?, ?, ?)",
+        (key, win["id"], win["user_id"], win["n"], _now_utc().isoformat()),
+    )
+    if cur.rowcount == 1:
+        notify(db, win["user_id"], None, "award", "post", win["id"])
+    db.commit()
+    return db.execute("SELECT * FROM awards WHERE week_start = ?", (key,)).fetchone()
+
+
+@app.template_filter("ct_time")
+def ct_time(iso):
+    """Stored naive-UTC ISO timestamp -> 'Oct 28, 11:05 PM CT'."""
+    try:
+        dt = datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).astimezone(CENTRAL)
+    except (TypeError, ValueError):
+        return ""
+    return dt.strftime("%b %-d, %-I:%M %p") + " CT"
+
+
+def award_count(db, user_id):
+    return db.execute("SELECT COUNT(*) FROM awards WHERE user_id = ?", (user_id,)).fetchone()[0]
+
+
+def _week_label(week_start):
+    end = week_start + timedelta(days=6)
+    if week_start.month == end.month:
+        return f"{week_start.strftime('%b')} {week_start.day}–{end.day}"
+    return f"{week_start.strftime('%b')} {week_start.day} – {end.strftime('%b')} {end.day}"
 
 
 def _wants_json():
@@ -282,11 +450,23 @@ def toggle_reaction(kind, target_id):
     )
     on = False
     if cur.rowcount == 0:
-        db.execute(
+        ins = db.execute(
             "INSERT OR IGNORE INTO reactions (target_type, target_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)",
             (kind, target_id, viewer["id"], emoji, datetime.utcnow().isoformat()),
         )
         on = True
+        if ins.rowcount == 1:
+            owner_col = "user_id" if kind == "post" else "author_id"
+            owner = db.execute(f"SELECT {owner_col} AS uid FROM {table} WHERE id = ?", (target_id,)).fetchone()
+            if owner:
+                notify(db, owner["uid"], viewer["id"], "reaction", kind, target_id, emoji)
+    else:
+        # Un-react: drop the matching unread notification.
+        db.execute(
+            "DELETE FROM notifications WHERE kind = 'reaction' AND actor_id = ? AND target_type = ? "
+            "AND target_id = ? AND emoji = ? AND read_at IS NULL",
+            (viewer["id"], kind, target_id, emoji),
+        )
     db.commit()
     if _wants_json():
         rx = load_reactions(db, kind, [target_id], viewer["id"])[target_id]
@@ -294,6 +474,100 @@ def toggle_reaction(kind, target_id):
         return jsonify({"ok": True, "on": on, "html": str(bar(kind, target_id, rx))})
     anchor = ("#post-%d" if kind == "post" else "#bp-%d") % target_id
     return redirect(back.split("#")[0] + anchor)
+
+
+def _cheek_squeak_context(db, viewer):
+    """Banner data: last completed week's winner + this week's leader so far."""
+    award = ensure_weekly_award(db)
+    week_start, _, _ = week_bounds(weeks_back=1)
+    out = {"label": _week_label(week_start), "winner": None, "leader": None}
+    if award:
+        row = db.execute(
+            "SELECT p.id, p.user_id, p.content, p.audio_path, p.created_at, COALESCE(u.username, 'unknown') AS username "
+            "FROM posts p LEFT JOIN users u ON u.id = p.user_id WHERE p.id = ?",
+            (award["post_id"],),
+        ).fetchone()
+        if row:
+            w = dict(row)
+            w["reaction_count"] = award["reaction_count"]
+            w["reactions"] = load_reactions(db, "post", [w["id"]], viewer["id"]).get(w["id"], [])
+            out["winner"] = w
+    _, cs, ce = week_bounds(weeks_back=0)
+    lead = top_post_between(db, cs, ce)
+    if lead:
+        u = db.execute("SELECT username FROM users WHERE id = ?", (lead["user_id"],)).fetchone()
+        out["leader"] = {"id": lead["id"], "n": lead["n"], "username": u["username"] if u else "unknown"}
+    if not out["winner"] and not out["leader"]:
+        return None
+    return out
+
+
+@app.route("/notifications")
+def notifications_page():
+    viewer = require_user()
+    if not viewer:
+        return redirect(url_for("login"))
+    db = get_db()
+    ensure_weekly_award(db)
+    prune_notifications(db, viewer["id"])
+    rows = db.execute(
+        """
+        SELECT n.*, a.username AS actor_name,
+               p.content AS post_text,
+               b.body AS board_text, bo.username AS board_owner
+        FROM notifications n
+        LEFT JOIN users a ON a.id = n.actor_id
+        LEFT JOIN posts p ON n.target_type = 'post' AND p.id = n.target_id
+        LEFT JOIN board_posts b ON n.target_type = 'board' AND b.id = n.target_id
+        LEFT JOIN users bo ON bo.id = b.board_user_id
+        WHERE n.user_id = ?
+        ORDER BY n.created_at DESC, n.id DESC
+        LIMIT ?
+        """,
+        (viewer["id"], NOTIFY_KEEP),
+    ).fetchall()
+    items, by_key = [], {}
+    for r in rows:
+        if r["target_type"] == "post":
+            link = url_for("index") + "#post-%d" % r["target_id"]
+            snippet = r["post_text"] or ""
+        elif r["target_type"] == "board":
+            owner = r["board_owner"] or viewer["username"]
+            link = url_for("user_profile", username=owner) + "#bp-%d" % r["target_id"]
+            snippet = r["board_text"] or ""
+        else:
+            link, snippet = url_for("index"), ""
+        if len(snippet) > 60:
+            snippet = snippet[:57].rstrip() + "…"
+        # Group several reactions from the same person on the same post into one line.
+        if r["kind"] == "reaction":
+            key = (r["actor_id"], r["target_type"], r["target_id"])
+            if key in by_key:
+                it = by_key[key]
+                if r["emoji"] and r["emoji"] not in it["emojis"]:
+                    it["emojis"].append(r["emoji"])
+                it["unread"] = it["unread"] or r["read_at"] is None
+                continue
+        it = {
+            "kind": r["kind"],
+            "actor": r["actor_name"] or "Someone",
+            "emojis": [r["emoji"]] if r["emoji"] else [],
+            "target_type": r["target_type"],
+            "link": link,
+            "snippet": snippet,
+            "created_at": r["created_at"] or "",
+            "unread": r["read_at"] is None,
+        }
+        if r["kind"] == "reaction":
+            by_key[(r["actor_id"], r["target_type"], r["target_id"])] = it
+        items.append(it)
+    db.execute(
+        "UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL",
+        (_now_utc().isoformat(), viewer["id"]),
+    )
+    db.commit()
+    g._unread_n = 0
+    return render_template("notifications.html", items=items, username=session.get("username"))
 
 
 @app.route("/")
@@ -332,8 +606,10 @@ def index():
     rx = load_reactions(db, "post", [p["id"] for p in posts], viewer["id"])
     for p in posts:
         p["reactions"] = rx.get(p["id"], [])
+    squeak = _cheek_squeak_context(db, viewer)
     return render_template(
         "feed.html",
+        squeak=squeak,
         posts=posts,
         username=session.get("username"),
         is_admin=is_admin_user(viewer),
@@ -664,6 +940,7 @@ def user_profile(username):
     if not profile:
         flash("No member by that name.")
         return redirect(url_for("index"))
+    ensure_weekly_award(db)
     tops_raw = _load_top_posts(db, profile)
     is_owner = viewer["id"] == profile["id"]
     viewer_admin = is_admin_user(viewer)
@@ -694,6 +971,7 @@ def user_profile(username):
         is_owner=is_owner,
         username=session.get("username"),
         is_admin=viewer_admin,
+        squeak_wins=award_count(db, profile["id"]),
     )
 
 
@@ -796,10 +1074,11 @@ def board_post(username):
     if not body and not clip_name:
         flash("Add some words or a clip before slapping it on the board.")
         return redirect(back)
-    db.execute(
+    cur = db.execute(
         "INSERT INTO board_posts (board_user_id, author_id, body, audio_path, created_at) VALUES (?, ?, ?, ?, ?)",
         (owner["id"], viewer["id"], body, clip_name, datetime.utcnow().isoformat()),
     )
+    notify(db, owner["id"], viewer["id"], "board_post", "board", cur.lastrowid)
     db.commit()
     flash("Pinned to the Cheese Board. 🧀")
     return redirect(back)

@@ -3,6 +3,27 @@
 {% block content %}
 {% from "_reactions.html" import reaction_bar %}
 <h1 class="profile-name feed-heading">💨 The Back Draft</h1>
+{% if squeak %}
+<div class="card squeak-card" id="cheek-squeak">
+    <div class="squeak-title">🏆 Cheek Squeak O' the Week <span class="squeak-week">{{ squeak.label }}</span></div>
+    {% if squeak.winner %}
+    {% set w = squeak.winner %}
+    <div class="post-meta squeak-meta">
+        {% if w.username != 'unknown' %}<strong><a href="{{ url_for('user_profile', username=w.username) }}">{{ w.username }}</a>{{ admin_badge(w.username) }}</strong>{% else %}<strong>{{ w.username }}</strong>{% endif %}
+        · {{ w.reaction_count }} reaction{{ '' if w.reaction_count == 1 else 's' }}
+    </div>
+    {% if w.content %}<div class="squeak-text">{{ w.content }}</div>{% endif %}
+    {% if w.audio_path %}
+    <audio class="post-audio" controls preload="none" src="{{ url_for('serve_clip', filename=w.audio_path) }}"></audio>
+    {% endif %}
+    {% else %}
+    <div class="muted squeak-none">No winner last week — nobody got a reaction.</div>
+    {% endif %}
+    {% if squeak.leader %}
+    <div class="squeak-leader">This week's leader so far: <a href="#post-{{ squeak.leader.id }}">{{ squeak.leader.username }}</a> with {{ squeak.leader.n }} reaction{{ '' if squeak.leader.n == 1 else 's' }}</div>
+    {% endif %}
+</div>
+{% endif %}
 <div class="card">
     <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data" id="compose-form" data-require-audio="{{ '0' if is_admin else '1' }}" data-max="{{ post_max }}">
         <textarea name="content" id="compose-content" rows="3" maxlength="{{ post_max }}" placeholder="What's fermenting? Float a biscuit…"></textarea>

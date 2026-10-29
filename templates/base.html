@@ -145,6 +145,27 @@
         .welcome-cta { display: block; text-align: center; background: #c47a12; color: #fff !important; font-size: 19px; font-weight: 700;
                        padding: 16px 20px; border-radius: 10px; text-decoration: none; margin: 8px 0 24px; min-height: 24px; }
         .welcome-cta:hover { background: #a9680f; }
+        .notif-badge { display: inline-block; min-width: 18px; padding: 1px 6px; border-radius: 999px; background: #d93025; color: #fff;
+                       font-size: 11px; font-weight: 700; line-height: 16px; text-align: center; vertical-align: 1px; box-sizing: border-box; }
+        .nav-ico { position: relative; }
+        .notif-badge-ico { position: absolute; top: -6px; right: -12px; font-size: 10px; min-width: 16px; padding: 0 4px; line-height: 15px; border: 1.5px solid #c47a12; }
+        .notif-list { list-style: none; margin: 0; padding: 0; }
+        .notif-item { border-top: 1px solid #f0e0c0; }
+        .notif-item:first-child { border-top: 0; }
+        .notif-item a { display: flex; gap: 10px; align-items: flex-start; padding: 12px 4px; color: inherit; text-decoration: none; min-height: 44px; }
+        .notif-item a:hover { background: #fff8e7; }
+        .notif-item.unread a { background: #fff6e0; }
+        .notif-item .notif-ico { font-size: 22px; line-height: 1.1; flex: 0 0 28px; text-align: center; }
+        .notif-item .notif-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+        .notif-item .notif-snippet { color: #7a6a55; font-size: 13px; }
+        .notif-item .notif-time { color: #9a8a75; font-size: 12px; }
+        .notif-dot { width: 8px; height: 8px; border-radius: 50%; background: #d93025; flex: 0 0 8px; margin-top: 7px; }
+        .squeak-card { border: 2px solid #e0a030; background: linear-gradient(180deg, #fff3d0, #fffaf0); }
+        .squeak-title { font-weight: 800; font-size: 17px; color: #8a5208; margin-bottom: 6px; }
+        .squeak-week { font-weight: 600; font-size: 12px; color: #a07a40; margin-left: 4px; white-space: nowrap; }
+        .squeak-text { margin: 6px 0 2px; }
+        .squeak-leader { margin-top: 10px; font-size: 13px; color: #7a6a55; border-top: 1px dashed #e8c98a; padding-top: 8px; }
+        .squeak-badge { display: inline-block; margin-top: 4px; padding: 3px 10px; border-radius: 999px; background: #fde7b8; color: #8a5208; font-weight: 700; font-size: 13px; }
         .post-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
         .post-card-head .post-meta { flex: 1; margin-bottom: 0; }
         .post-menu { position: relative; flex: 0 0 auto; }
@@ -280,6 +301,7 @@
                 <a href="{{ url_for('welcome') }}" class="{% if ep == 'welcome' %}nav-active{% endif %}"{% if ep == 'welcome' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👋</span><span class="nav-label">Welcome</span><span class="nav-short" aria-hidden="true">Welcome</span></a>
                 <a href="{{ url_for('index') }}" class="{% if ep == 'index' %}nav-active{% endif %}"{% if ep == 'index' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💨</span><span class="nav-label">The Back Draft</span><span class="nav-short" aria-hidden="true">Back Draft</span></a>
                 <a href="{{ url_for('people') }}" class="{% if ep == 'people' %}nav-active{% endif %}"{% if ep == 'people' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👥</span><span class="nav-label">People</span><span class="nav-short" aria-hidden="true">People</span></a>
+                <a href="{{ url_for('notifications_page') }}" class="nav-notif{% if ep == 'notifications_page' %} nav-active{% endif %}"{% if ep == 'notifications_page' %} aria-current="page"{% endif %} aria-label="Notifications{% if unread_notifications %} ({{ unread_notifications }} unread){% endif %}"><span class="nav-ico" aria-hidden="true">🔔{% if unread_notifications %}<span class="notif-badge notif-badge-ico">{{ unread_notifications if unread_notifications < 100 else '99+' }}</span>{% endif %}</span><span class="nav-label">Notifications{% if unread_notifications %} <span class="notif-badge">{{ unread_notifications if unread_notifications < 100 else '99+' }}</span>{% endif %}</span><span class="nav-short" aria-hidden="true">Alerts</span></a>
                 <a href="{{ url_for('me') }}" class="{% if on_own_profile %}nav-active{% endif %}"{% if on_own_profile %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🧀</span><span class="nav-label">{{ session.username }}{{ admin_badge(session.username) }}</span><span class="nav-short" aria-hidden="true">Me</span></a>
                 <div class="nav-spacer" aria-hidden="true"></div>
                 <a class="nav-muted" href="{{ url_for('logout') }}"><span class="nav-ico" aria-hidden="true">🚪</span><span class="nav-label">Logout</span><span class="nav-short" aria-hidden="true">Logout</span></a>

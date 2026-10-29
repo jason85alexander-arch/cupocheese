@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Notifications - Cup O' Cheese{% endblock %}
+{% block content %}
+<h1 class="profile-name feed-heading">🔔 Notifications</h1>
+<div class="card">
+    {% if items %}
+    <ul class="notif-list">
+        {% for n in items %}
+        <li class="notif-item{% if n.unread %} unread{% endif %}">
+            <a href="{{ n.link }}">
+                {% if n.kind == 'reaction' %}
+                <span class="notif-ico" aria-hidden="true">{{ n.emojis[0] if n.emojis else '💨' }}</span>
+                <span class="notif-text">
+                    <strong>{{ n.actor }}</strong> {{ n.emojis|join('') }}'d your {{ 'Cheese Board post' if n.target_type == 'board' else 'toot' }}
+                    {% if n.snippet %}<span class="notif-snippet">“{{ n.snippet }}”</span>{% endif %}
+                {% elif n.kind == 'board_post' %}
+                <span class="notif-ico" aria-hidden="true">🧀</span>
+                <span class="notif-text">
+                    <strong>{{ n.actor }}</strong> dropped a toot on your Cheese Board
+                    {% if n.snippet %}<span class="notif-snippet">“{{ n.snippet }}”</span>{% endif %}
+                {% elif n.kind == 'award' %}
+                <span class="notif-ico" aria-hidden="true">🏆</span>
+                <span class="notif-text">
+                    <strong>Your toot won Cheek Squeak O' the Week!</strong>
+                    {% if n.snippet %}<span class="notif-snippet">“{{ n.snippet }}”</span>{% endif %}
+                {% else %}
+                <span class="notif-ico" aria-hidden="true">🔔</span>
+                <span class="notif-text">Something happened.
+                {% endif %}
+                    <br><span class="notif-time">{{ n.created_at|ct_time }}</span>
+                </span>
+                {% if n.unread %}<span class="notif-dot" aria-label="New"></span>{% endif %}
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">All quiet in the cheese cave. When someone reacts to your toots or posts on your Cheese Board, it'll show up here.</p>
+    {% endif %}
+</div>
+{% endblock %}
