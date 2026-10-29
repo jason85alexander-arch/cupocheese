@@ -130,6 +130,22 @@ def init_db():
             ).fetchone()
             if first:
                 db.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (first["id"],))
+        # Cheese Boards: members post on each other's profile pages (no DMs).
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS board_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                board_user_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                audio_path TEXT,
+                created_at TEXT,
+                FOREIGN KEY (board_user_id) REFERENCES users (id),
+                FOREIGN KEY (author_id) REFERENCES users (id)
+            )
+        """)
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_board_posts_board ON board_posts (board_user_id, created_at)"
+        )
         db.commit()  # schema ready
 
 @app.route("/")
@@ -242,6 +258,9 @@ def serve_clip(filename):
 @app.errorhandler(413)
 def too_large(_err):
     # Avatar edits and clip posts share the same limit; route flash by referrer path.
+    if "/board" in (request.path or ""):
+        flash("That clip is too large (max 15 MB). Try a shorter recording.")
+        return redirect(request.referrer or url_for("index"))
     path = (request.path or "") + " " + (request.referrer or "")
     if "profile" in path or "avatar" in path:
         flash("That picture is too large (max 5 MB).")
@@ -466,10 +485,153 @@ def user_profile(username):
         "profile.html",
         profile=profile,
         tops=tops,
+        board=_load_board(db, profile["id"], viewer),
+        board_max=BOARD_MAX_CHARS,
         is_owner=is_owner,
         username=session.get("username"),
         is_admin=viewer_admin,
     )
+
+
+BOARD_MAX_CHARS = 1000
+BOARD_LIST_LIMIT = 100
+
+
+def can_delete_board_post(viewer, board_post):
+    """Author, board owner, or admin may delete a Cheese Board post."""
+    if not viewer or not board_post:
+        return False
+    if viewer["id"] in (board_post["author_id"], board_post["board_user_id"]):
+        return True
+    return is_admin_user(viewer)
+
+
+def _save_audio_upload(clip):
+    """Save an uploaded audio clip into UPLOAD_FOLDER. Returns (filename|None, error|None)."""
+    if not clip or not getattr(clip, "filename", None):
+        return None, None
+    name = secure_filename(clip.filename or "clip.webm") or "clip.webm"
+    ext = os.path.splitext(name)[1].lower()
+    if not ext:
+        ctype = (clip.mimetype or "").lower()
+        if "ogg" in ctype:
+            ext = ".ogg"
+        elif "mp4" in ctype or "m4a" in ctype or "aac" in ctype:
+            ext = ".mp4"
+        elif "wav" in ctype:
+            ext = ".wav"
+        elif "mpeg" in ctype or "mp3" in ctype:
+            ext = ".mp3"
+        else:
+            ext = ".webm"
+    if ext not in ALLOWED_AUDIO_EXT:
+        return None, "Unsupported audio type. Try recording again."
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    clip_name = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_bd_" + secrets.token_hex(8) + ext
+    dest = os.path.join(UPLOAD_FOLDER, clip_name)
+    try:
+        clip.save(dest)
+        size = os.path.getsize(dest)
+        if size == 0 or size > MAX_AUDIO_BYTES:
+            os.remove(dest)
+            return None, "Clip could not be saved (empty or too large)."
+    except OSError:
+        return None, "Could not store clip on server."
+    return clip_name, None
+
+
+def _load_board(db, board_user_id, viewer):
+    rows = db.execute(
+        """
+        SELECT b.id, b.board_user_id, b.author_id, b.body, b.audio_path, b.created_at,
+               u.username AS author_username, u.avatar_path AS author_avatar
+        FROM board_posts b
+        LEFT JOIN users u ON u.id = b.author_id
+        WHERE b.board_user_id = ?
+        ORDER BY b.created_at DESC, b.id DESC
+        LIMIT ?
+        """,
+        (board_user_id, BOARD_LIST_LIMIT),
+    ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "body": r["body"],
+            "audio_path": r["audio_path"],
+            "created_at": r["created_at"] or "",
+            "author_username": r["author_username"],
+            "author_avatar": r["author_avatar"],
+            "can_delete": can_delete_board_post(viewer, r),
+        }
+        for r in rows
+    ]
+
+
+@app.route("/u/<username>/board", methods=["POST"])
+def board_post(username):
+    viewer = require_user()
+    if not viewer:
+        return redirect(url_for("login"))
+    db = get_db()
+    owner = db.execute("SELECT id, username FROM users WHERE username = ?", (username,)).fetchone()
+    if not owner:
+        flash("No member by that name.")
+        return redirect(url_for("people"))
+    back = url_for("user_profile", username=owner["username"]) + "#board"
+    body = (request.form.get("body") or "").strip()
+    if len(body) > BOARD_MAX_CHARS:
+        flash(f"Keep it under {BOARD_MAX_CHARS} characters — it's a cheese board, not a novel.")
+        return redirect(back)
+    clip_name, err = _save_audio_upload(request.files.get("audio"))
+    if err:
+        flash(err)
+    if not body and not clip_name:
+        flash("Add some words or a clip before slapping it on the board.")
+        return redirect(back)
+    db.execute(
+        "INSERT INTO board_posts (board_user_id, author_id, body, audio_path, created_at) VALUES (?, ?, ?, ?, ?)",
+        (owner["id"], viewer["id"], body, clip_name, datetime.utcnow().isoformat()),
+    )
+    db.commit()
+    flash("Pinned to the Cheese Board. 🧀")
+    return redirect(back)
+
+
+@app.route("/board/<int:post_id>/delete", methods=["POST"])
+def delete_board_post(post_id):
+    viewer = require_user()
+    if not viewer:
+        return redirect(url_for("login"))
+    db = get_db()
+    bp = db.execute(
+        """
+        SELECT b.id, b.board_user_id, b.author_id, b.audio_path, u.username AS board_username
+        FROM board_posts b LEFT JOIN users u ON u.id = b.board_user_id
+        WHERE b.id = ?
+        """,
+        (post_id,),
+    ).fetchone()
+    if not bp:
+        flash("That board post is already gone.")
+        return redirect(request.referrer or url_for("index"))
+    back = (
+        url_for("user_profile", username=bp["board_username"]) + "#board"
+        if bp["board_username"] else url_for("index")
+    )
+    if not can_delete_board_post(viewer, bp):
+        flash("Only the author, the board owner, or an admin can remove that.")
+        return redirect(back)
+    db.execute("DELETE FROM board_posts WHERE id = ?", (post_id,))
+    db.commit()
+    if bp["audio_path"]:
+        path = os.path.join(UPLOAD_FOLDER, bp["audio_path"])
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    flash("Board post scraped off.")
+    return redirect(back)
 
 
 @app.route("/people")

@@ -57,4 +57,155 @@
     <p class="muted">{% if is_owner %}Pick your proudest three on Edit profile.{% else %}No top picks yet — still warming up.{% endif %}</p>
     {% endif %}
 </div>
+<div class="card" id="board">
+    <h2 class="section-title">🧀 Cheese Board</h2>
+    <p class="muted" style="margin-top:-6px">{% if is_owner %}Your board — friends leave their crumbs here.{% else %}Leave {{ profile.username }} a little something on their board.{% endif %}</p>
+    <form action="{{ url_for('board_post', username=profile.username) }}" method="post" enctype="multipart/form-data" id="board-form">
+        <textarea name="body" id="board-body" rows="2" maxlength="{{ board_max }}" placeholder="{% if is_owner %}Pin a note to your own board…{% else %}Say cheese to {{ profile.username }}…{% endif %}"></textarea>
+        <input type="file" name="audio" id="board-audio" accept="audio/webm,audio/ogg,audio/mp4,audio/*,.webm,.ogg,.mp4,.m4a,.wav,.mp3" hidden>
+        <div class="compose-bar">
+            <button type="button" id="board-rec-btn" class="rec-btn" aria-pressed="false">Record</button>
+            <span id="board-rec-status" class="rec-status" aria-live="polite"></span>
+            <button type="submit" class="post-btn" aria-label="Post to board" id="board-post-btn">🧀</button>
+        </div>
+        <audio id="board-rec-preview" class="rec-preview" controls hidden></audio>
+    </form>
+
+    {% if board %}
+    <ul class="board-list">
+        {% for bp in board %}
+        <li class="board-item">
+            <div class="post-card-head">
+                <div class="post-meta">
+                    {% if bp.author_username %}
+                    <a href="{{ url_for('user_profile', username=bp.author_username) }}" class="board-author">
+                        {% if bp.author_avatar %}
+                        <img class="avatar avatar-sm" src="{{ url_for('serve_avatar', filename=bp.author_avatar) }}" alt="">
+                        {% else %}
+                        <span class="avatar avatar-sm avatar-placeholder" aria-hidden="true">🧀</span>
+                        {% endif %}<strong>{{ bp.author_username }}</strong></a>
+                    {% else %}
+                    <span class="avatar avatar-sm avatar-placeholder" aria-hidden="true">🧀</span><strong>former member</strong>
+                    {% endif %}
+                    · {{ bp.created_at[:16].replace('T', ' ') }}
+                </div>
+                {% if bp.can_delete %}
+                <div class="post-menu">
+                    <button type="button" class="post-menu-btn" aria-label="Board post options" aria-expanded="false" aria-haspopup="true">⋯</button>
+                    <div class="post-menu-panel" role="menu">
+                        <form class="delete-form" action="{{ url_for('delete_board_post', post_id=bp.id) }}" method="post"
+                              onsubmit="return confirm('Scrape this off the board?');">
+                            <button type="submit" class="delete-btn menu-danger" role="menuitem">Delete</button>
+                        </form>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% if bp.body %}
+            <div class="board-body">{{ bp.body }}</div>
+            {% endif %}
+            {% if bp.audio_path %}
+            <audio class="post-audio" controls preload="none" src="{{ url_for('serve_clip', filename=bp.audio_path) }}"></audio>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">Board's bare — no crumbs yet. Be the first to leave a slice.</p>
+    {% endif %}
+</div>
+
+<script>
+(function () {
+  var form = document.getElementById("board-form");
+  if (!form) return;
+  var content = document.getElementById("board-body");
+  var fileInput = document.getElementById("board-audio");
+  var recBtn = document.getElementById("board-rec-btn");
+  var postBtn = document.getElementById("board-post-btn");
+  var statusEl = document.getElementById("board-rec-status");
+  var preview = document.getElementById("board-rec-preview");
+  var recorder = null, chunks = [], stream = null, recordedBlob = null, recordedMime = "", submitting = false;
+
+  function setStatus(t) { statusEl.textContent = t || ""; }
+  function pickMime() {
+    var types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+    for (var i = 0; i < types.length; i++) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(types[i])) return types[i];
+    }
+    return "";
+  }
+  function stopTracks() { if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; } }
+  function extFor(mime) {
+    mime = mime || "";
+    if (mime.indexOf("mp4") >= 0 || mime.indexOf("aac") >= 0) return "mp4";
+    if (mime.indexOf("ogg") >= 0) return "ogg";
+    if (mime.indexOf("wav") >= 0) return "wav";
+    return "webm";
+  }
+  function attachBlob(b, mime) {
+    recordedBlob = b;
+    recordedMime = mime || b.type || "audio/webm";
+    try {
+      var dt = new DataTransfer();
+      dt.items.add(new File([b], "clip." + extFor(recordedMime), { type: recordedMime }));
+      fileInput.files = dt.files;
+    } catch (err) {}
+    preview.src = URL.createObjectURL(b);
+    preview.hidden = false;
+    setStatus("Clip ready (" + Math.max(1, Math.round(b.size / 1024)) + " KB)");
+  }
+  async function startRec() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setStatus("Mic not supported here"); return; }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { setStatus("Mic permission denied"); return; }
+    chunks = []; recordedBlob = null;
+    var mime = pickMime();
+    try { recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); }
+    catch (e) { stopTracks(); setStatus("Recorder failed"); return; }
+    recorder.ondataavailable = function (ev) { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    recorder.onstop = function () {
+      var type = (recorder && recorder.mimeType) || mime || "audio/webm";
+      var b = new Blob(chunks, { type: type });
+      stopTracks(); recorder = null;
+      recBtn.textContent = "Record"; recBtn.setAttribute("aria-pressed", "false"); recBtn.classList.remove("recording");
+      if (!b.size) { setStatus("No audio captured"); return; }
+      attachBlob(b, type);
+    };
+    recorder.start(250);
+    recBtn.textContent = "Stop"; recBtn.setAttribute("aria-pressed", "true"); recBtn.classList.add("recording");
+    setStatus("Recording…");
+  }
+  function stopRec() {
+    if (recorder && recorder.state !== "inactive") { try { recorder.requestData(); } catch (e) {} recorder.stop(); }
+  }
+  recBtn.addEventListener("click", function () {
+    if (recorder && recorder.state === "recording") stopRec(); else startRec();
+  });
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (submitting) return;
+    if (recorder && recorder.state === "recording") { setStatus("Stop recording first"); return; }
+    var text = content.value.trim();
+    var hasFile = fileInput.files && fileInput.files.length > 0;
+    var hasBlob = !!(recordedBlob && recordedBlob.size);
+    if (!text && !hasFile && !hasBlob) { setStatus("Add text or a clip"); content.focus(); return; }
+    submitting = true; postBtn.disabled = true; setStatus("Pinning…");
+    var fd = new FormData();
+    fd.append("body", text);
+    if (hasBlob) fd.append("audio", recordedBlob, "clip." + extFor(recordedMime));
+    else if (hasFile) fd.append("audio", fileInput.files[0], fileInput.files[0].name || "clip.webm");
+    fetch(form.action, { method: "POST", body: fd, credentials: "same-origin", redirect: "follow" })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        window.location.href = window.location.pathname + "#board";
+        window.location.reload();
+      })
+      .catch(function () {
+        submitting = false; postBtn.disabled = false;
+        setStatus("Post failed — try again");
+      });
+  });
+})();
+</script>
 {% endblock %}
