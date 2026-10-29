@@ -250,6 +250,7 @@ def init_db():
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_board_posts_board ON board_posts (board_user_id, created_at)"
         )
+        db.execute("CREATE INDEX IF NOT EXISTS idx_board_posts_created ON board_posts (created_at)")
         bp_cols = {row["name"] for row in db.execute("PRAGMA table_info(board_posts)").fetchall()}
         if "self_reacted_at" not in bp_cols:
             # Permanent "geek" mark: set on the author's first reaction to their own post, never cleared.
@@ -301,6 +302,10 @@ def init_db():
                 created_at TEXT
             )
         """)
+        aw_cols = {row["name"] for row in db.execute("PRAGMA table_info(awards)").fetchall()}
+        if "target_type" not in aw_cols:
+            # Existing awards were all feed posts; keep them exactly as stored.
+            db.execute("ALTER TABLE awards ADD COLUMN target_type TEXT NOT NULL DEFAULT 'post'")
         # Admin-issued, single-use invites.
         db.execute("""
             CREATE TABLE IF NOT EXISTS invites (
@@ -423,11 +428,13 @@ def unread_back_draft_count(user_id):
         return g._unread_bd
     try:
         n = get_db().execute(
-            """SELECT COUNT(*) FROM posts
-               WHERE created_at > (SELECT COALESCE(back_draft_seen_at, created_at, '') FROM users WHERE id = ?)
-                 AND user_id != ?""",
-            (user_id, user_id),
-        ).fetchone()[0]
+            """WITH seen AS (SELECT COALESCE(back_draft_seen_at, created_at, '') AS t FROM users WHERE id = ?)
+               SELECT (SELECT COUNT(*) FROM posts
+                        WHERE created_at > (SELECT t FROM seen) AND user_id != ?)
+                    + (SELECT COUNT(*) FROM board_posts
+                        WHERE created_at > (SELECT t FROM seen) AND author_id != ?)""",
+            (user_id, user_id, user_id),
+        ).fetchone()[0] or 0
     except sqlite3.Error:
         n = 0
     g._unread_bd = n
@@ -468,20 +475,30 @@ def week_bounds(now_utc=None, weeks_back=0):
 
 
 def top_post_between(db, start_utc, end_utc):
-    """Feed post created in [start, end) with most reactions from people other than its author;
-    ties -> most distinct (non-author) reactors, then earliest. Self-reactions never count."""
+    """Back Draft toot (feed post or Cheese Board post) created in [start, end) with most reactions
+    from people other than its author; ties -> most distinct (non-author) reactors, then earliest.
+    Self-reactions never count. Returns row with kind ('post'|'board'), id, user_id (author), n, d."""
+    s, e = start_utc.isoformat(), end_utc.isoformat()
     return db.execute(
         """
-        SELECT p.id, p.user_id, p.created_at, COUNT(r.id) AS n, COUNT(DISTINCT r.user_id) AS d
-        FROM posts p
-        JOIN reactions r ON r.target_type = 'post' AND r.target_id = p.id AND r.user_id != p.user_id
-        WHERE p.created_at >= ? AND p.created_at < ?
-        GROUP BY p.id
-        HAVING COUNT(r.id) >= 1
-        ORDER BY n DESC, d DESC, p.created_at ASC, p.id ASC
+        SELECT * FROM (
+            SELECT 'post' AS kind, p.id, p.user_id, p.created_at, COUNT(r.id) AS n, COUNT(DISTINCT r.user_id) AS d
+            FROM posts p
+            JOIN reactions r ON r.target_type = 'post' AND r.target_id = p.id AND r.user_id != p.user_id
+            WHERE p.created_at >= ? AND p.created_at < ?
+            GROUP BY p.id
+            UNION ALL
+            SELECT 'board' AS kind, b.id, b.author_id AS user_id, b.created_at, COUNT(r.id) AS n, COUNT(DISTINCT r.user_id) AS d
+            FROM board_posts b
+            JOIN reactions r ON r.target_type = 'board' AND r.target_id = b.id AND r.user_id != b.author_id
+            WHERE b.created_at >= ? AND b.created_at < ?
+            GROUP BY b.id
+        )
+        WHERE n >= 1
+        ORDER BY n DESC, d DESC, created_at ASC, kind DESC, id ASC
         LIMIT 1
         """,
-        (start_utc.isoformat(), end_utc.isoformat()),
+        (s, e, s, e),
     ).fetchone()
 
 
@@ -496,11 +513,12 @@ def ensure_weekly_award(db, now_utc=None):
     if not win:
         return None  # nobody reacted; re-checked cheaply on later requests
     cur = db.execute(
-        "INSERT OR IGNORE INTO awards (week_start, post_id, user_id, reaction_count, created_at) VALUES (?, ?, ?, ?, ?)",
-        (key, win["id"], win["user_id"], win["n"], _now_utc().isoformat()),
+        "INSERT OR IGNORE INTO awards (week_start, post_id, user_id, reaction_count, created_at, target_type) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (key, win["id"], win["user_id"], win["n"], _now_utc().isoformat(), win["kind"]),
     )
     if cur.rowcount == 1:
-        notify(db, win["user_id"], None, "award", "post", win["id"])
+        notify(db, win["user_id"], None, "award", win["kind"], win["id"])
     db.commit()
     return db.execute("SELECT * FROM awards WHERE week_start = ?", (key,)).fetchone()
 
@@ -599,22 +617,35 @@ def _cheek_squeak_context(db, viewer):
     week_start, _, _ = week_bounds(weeks_back=1)
     out = {"label": _week_label(week_start), "winner": None, "leader": None}
     if award:
-        row = db.execute(
-            "SELECT p.id, p.user_id, p.content, p.audio_path, p.created_at, p.self_reacted_at, "
-            "COALESCE(u.username, 'unknown') AS username "
-            "FROM posts p LEFT JOIN users u ON u.id = p.user_id WHERE p.id = ?",
-            (award["post_id"],),
-        ).fetchone()
+        kind = award["target_type"] or "post"
+        if kind == "board":
+            row = db.execute(
+                "SELECT b.id, b.author_id AS user_id, b.body AS content, b.audio_path, b.created_at, b.self_reacted_at, "
+                "COALESCE(u.username, 'unknown') AS username, o.username AS board_owner "
+                "FROM board_posts b LEFT JOIN users u ON u.id = b.author_id "
+                "LEFT JOIN users o ON o.id = b.board_user_id WHERE b.id = ?",
+                (award["post_id"],),
+            ).fetchone()
+        else:
+            row = db.execute(
+                "SELECT p.id, p.user_id, p.content, p.audio_path, p.created_at, p.self_reacted_at, "
+                "COALESCE(u.username, 'unknown') AS username, NULL AS board_owner "
+                "FROM posts p LEFT JOIN users u ON u.id = p.user_id WHERE p.id = ?",
+                (award["post_id"],),
+            ).fetchone()
         if row:
             w = dict(row)
+            w["kind"] = kind
             w["reaction_count"] = award["reaction_count"]
-            w["reactions"] = load_reactions(db, "post", [w["id"]], viewer["id"]).get(w["id"], [])
+            w["reactions"] = load_reactions(db, kind, [w["id"]], viewer["id"]).get(w["id"], [])
             out["winner"] = w
     _, cs, ce = week_bounds(weeks_back=0)
     lead = top_post_between(db, cs, ce)
     if lead:
         u = db.execute("SELECT username FROM users WHERE id = ?", (lead["user_id"],)).fetchone()
-        out["leader"] = {"id": lead["id"], "n": lead["n"], "username": u["username"] if u else "unknown"}
+        out["leader"] = {"id": lead["id"], "n": lead["n"], "kind": lead["kind"],
+                         "anchor": ("bp-%d" if lead["kind"] == "board" else "post-%d") % lead["id"],
+                         "username": u["username"] if u else "unknown"}
     if not out["winner"] and not out["leader"]:
         return None
     return out
@@ -715,6 +746,7 @@ def index():
     posts = []
     for row in list(pinned_rows) + list(rows):
         posts.append({
+            "kind": "post",
             "id": row["id"],
             "user_id": row["user_id"],
             "content": row["content"],
@@ -729,6 +761,38 @@ def index():
     rx = load_reactions(db, "post", [p["id"] for p in posts], viewer["id"])
     for p in posts:
         p["reactions"] = rx.get(p["id"], [])
+    # Cheese Board toots mix into the feed chronologically (pinned feed posts stay on top).
+    board_rows = db.execute(
+        """
+        SELECT b.id, b.board_user_id, b.author_id, b.body, b.audio_path, b.created_at, b.self_reacted_at,
+               COALESCE(a.username, 'unknown') AS username, o.username AS board_owner
+        FROM board_posts b
+        LEFT JOIN users a ON a.id = b.author_id
+        LEFT JOIN users o ON o.id = b.board_user_id
+        ORDER BY b.created_at DESC, b.id DESC
+        LIMIT 50
+        """
+    ).fetchall()
+    boards = [{
+        "kind": "board",
+        "id": r["id"],
+        "user_id": r["author_id"],
+        "content": r["body"],
+        "created_at": r["created_at"] or "",
+        "audio_path": r["audio_path"],
+        "username": r["username"],
+        "board_owner": r["board_owner"],
+        "pinned": False,
+        "self_reacted": bool(r["self_reacted_at"]),
+        "can_pin": False,
+        "can_manage": can_delete_board_post(viewer, r),
+    } for r in board_rows]
+    brx = load_reactions(db, "board", [b["id"] for b in boards], viewer["id"])
+    for b in boards:
+        b["reactions"] = brx.get(b["id"], [])
+    n_pinned = len(pinned_rows)
+    stream = sorted(posts[n_pinned:] + boards, key=lambda p: p["created_at"] or "", reverse=True)[:50]
+    posts = posts[:n_pinned] + stream
     squeak = _cheek_squeak_context(db, viewer)
     return render_template(
         "feed.html",
@@ -1318,6 +1382,9 @@ def delete_board_post(post_id):
         url_for("user_profile", username=bp["board_username"]) + "#board"
         if bp["board_username"] else url_for("index")
     )
+    nxt = request.form.get("next") or ""
+    if nxt.startswith("/") and not nxt.startswith("//"):
+        back = nxt
     if not can_delete_board_post(viewer, bp):
         flash("Only the author, the board owner, or an admin can remove that.")
         return redirect(back)

@@ -4,13 +4,13 @@
 {% from "_reactions.html" import reaction_bar, geek_badge %}
 <h1 class="profile-name feed-heading">💨 The Back Draft</h1>
 {% if squeak %}
-<div class="card squeak-card{% if squeak.winner and squeak.winner.self_reacted_at %} self-reacted{% endif %}" id="cheek-squeak"{% if squeak.winner %} data-geek="post:{{ squeak.winner.id }}"{% endif %}>
+<div class="card squeak-card{% if squeak.winner and squeak.winner.self_reacted_at %} self-reacted{% endif %}" id="cheek-squeak"{% if squeak.winner %} data-geek="{{ squeak.winner.kind }}:{{ squeak.winner.id }}"{% endif %}>
     <div class="squeak-title">🏆 Cheek Squeak O' the Week <span class="squeak-week">{{ squeak.label }}</span></div>
     {% if squeak.winner %}
     {% set w = squeak.winner %}
     {{ geek_badge(w.self_reacted_at) }}
     <div class="post-meta squeak-meta">
-        {% if w.username != 'unknown' %}<strong><a href="{{ url_for('user_profile', username=w.username) }}">{{ w.username }}</a>{{ admin_badge(w.username) }}</strong>{% else %}<strong>{{ w.username }}</strong>{% endif %}
+        {% if w.username != 'unknown' %}<strong><a href="{{ url_for('user_profile', username=w.username) }}">{{ w.username }}</a>{{ admin_badge(w.username) }}{{ member_no(w.username) }}</strong>{% if w.board_owner %} 💨 on <a href="{{ url_for('user_profile', username=w.board_owner) }}#board">{{ w.board_owner }}'s Cheese Board</a>{{ admin_badge(w.board_owner) }}{{ member_no(w.board_owner) }}{% endif %}{% else %}<strong>{{ w.username }}</strong>{% endif %}
         · {{ w.reaction_count }} reaction{{ '' if w.reaction_count == 1 else 's' }}
     </div>
     {% if w.content %}<div class="squeak-text">{{ w.content }}</div>{% endif %}
@@ -21,7 +21,7 @@
     <div class="muted squeak-none">No winner last week — nobody got a reaction.</div>
     {% endif %}
     {% if squeak.leader %}
-    <div class="squeak-leader">This week's leader so far: <a href="#post-{{ squeak.leader.id }}">{{ squeak.leader.username }}</a> with {{ squeak.leader.n }} reaction{{ '' if squeak.leader.n == 1 else 's' }}</div>
+    <div class="squeak-leader">This week's leader so far: <a href="#{{ squeak.leader.anchor }}">{{ squeak.leader.username }}</a> with {{ squeak.leader.n }} reaction{{ '' if squeak.leader.n == 1 else 's' }}</div>
     {% endif %}
 </div>
 {% endif %}
@@ -41,19 +41,32 @@
 </div>
 
 {% for post in posts %}
-<div class="card{% if post.pinned %} post-pinned{% endif %}{% if post.self_reacted %} self-reacted{% endif %}" id="post-{{ post.id }}" data-geek="post:{{ post.id }}">
+{% set is_board = post.kind == 'board' %}
+<div class="card{% if post.pinned %} post-pinned{% endif %}{% if is_board %} board-toot{% endif %}{% if post.self_reacted %} self-reacted{% endif %}" id="{{ 'bp' if is_board else 'post' }}-{{ post.id }}" data-geek="{{ post.kind }}:{{ post.id }}">
     {% if post.pinned %}<div class="pin-label">📌 Pinned</div>{% endif %}
     {{ geek_badge(post.self_reacted) }}
     <div class="post-card-head">
         <div class="post-meta">
             {% if post.username and post.username != 'unknown' %}
-            <strong><a href="{{ url_for('user_profile', username=post.username) }}">{{ post.username }}</a>{{ admin_badge(post.username) }}</strong>
+            <strong><a href="{{ url_for('user_profile', username=post.username) }}">{{ post.username }}</a>{{ admin_badge(post.username) }}{{ member_no(post.username) }}</strong>
             {% else %}
-            <strong>{{ post.username }}</strong>
+            <strong>{{ 'former member' if is_board else post.username }}</strong>
             {% endif %}
+            {% if is_board %}<span class="board-on">💨 on {% if post.board_owner %}<a href="{{ url_for('user_profile', username=post.board_owner) }}#board">{{ post.board_owner }}'s Cheese Board</a>{{ admin_badge(post.board_owner) }}{{ member_no(post.board_owner) }}{% else %}a Cheese Board{% endif %}</span>{% endif %}
             · {{ post.created_at[:16].replace('T', ' ') }}
         </div>
-        {% if post.can_manage %}
+        {% if post.can_manage and is_board %}
+        <div class="post-menu">
+            <button type="button" class="post-menu-btn" aria-label="Board post options" aria-expanded="false" aria-haspopup="true">⋯</button>
+            <div class="post-menu-panel" role="menu">
+                <form class="delete-form" action="{{ url_for('delete_board_post', post_id=post.id) }}" method="post"
+                      onsubmit="return confirm('Scrape this off the board?');">
+                    <input type="hidden" name="next" value="{{ url_for('index') }}">
+                    <button type="submit" class="delete-btn menu-danger" role="menuitem">Delete</button>
+                </form>
+            </div>
+        </div>
+        {% elif post.can_manage %}
         <div class="post-menu">
             <button type="button" class="post-menu-btn" aria-label="Post options" aria-expanded="false" aria-haspopup="true">⋯</button>
             <div class="post-menu-panel" role="menu">
@@ -73,12 +86,12 @@
         {% endif %}
     </div>
     {% if post.content %}
-    <div style="margin-top:8px;">{{ post.content }}</div>
+    <div style="margin-top:8px;{% if is_board %} white-space:pre-wrap; word-wrap:break-word;{% endif %}">{{ post.content }}</div>
     {% endif %}
     {% if post.audio_path %}
     <audio class="post-audio" controls preload="none" src="{{ url_for('serve_clip', filename=post.audio_path) }}"></audio>
     {% endif %}
-    {{ reaction_bar('post', post.id, post.reactions) }}
+    {{ reaction_bar(post.kind, post.id, post.reactions) }}
 </div>
 {% else %}
 <div class="card">
