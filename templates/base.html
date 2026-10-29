@@ -2,7 +2,15 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#c47a12">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Cup O' Cheese">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icons/favicon-32.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
     <title>{% block title %}Cup O' Cheese{% endblock %}</title>
     <style>
         * { box-sizing: border-box; }
@@ -201,11 +209,45 @@
         .crop-actions button:hover { background: #fff8e7; }
         #avatar { margin-bottom: 8px; }
 
-        @media (max-width: 560px) {
-            .sidebar { flex: 0 0 118px; width: 118px; padding: 12px 8px 20px; }
-            .sidebar .logo { font-size: 15px; margin-bottom: 10px; }
-            .sidebar-nav a { font-size: 13px; padding: 8px 8px; }
-            .container { padding: 0 10px; margin: 12px auto; }
+        .sidebar-nav .nav-ico, .sidebar-nav .nav-short { display: none; }
+        img, audio, video { max-width: 100%; }
+        .post-audio { width: 100%; }
+        .mobile-top { display: none; }
+        @media (max-width: 720px) {
+            html, body { overflow-x: hidden; }
+            .app-shell { display: block; min-height: 100vh; }
+            .mobile-top {
+                display: flex; align-items: center; justify-content: center;
+                background: #c47a12; color: #fff; font-weight: bold; font-size: 17px;
+                padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+                position: sticky; top: 0; z-index: 90;
+            }
+            .mobile-top a { color: #fff; text-decoration: none; }
+            .sidebar {
+                position: fixed; left: 0; right: 0; bottom: 0; top: auto;
+                width: auto; min-height: 0; flex: none;
+                padding: 4px max(4px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+                box-shadow: 0 -2px 10px rgba(0,0,0,.15); z-index: 100;
+            }
+            .sidebar .logo, .sidebar-nav .nav-spacer, .sidebar-nav .nav-label { display: none; }
+            .sidebar-nav { flex-direction: row; gap: 2px; }
+            .sidebar-nav a, .sidebar-nav .nav-muted {
+                flex: 1 1 0; min-width: 0; min-height: 56px;
+                display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+                padding: 6px 2px; font-size: 11px; font-weight: 600; opacity: .95; text-align: center;
+            }
+            .sidebar-nav .nav-ico { display: block; font-size: 22px; line-height: 1; }
+            .sidebar-nav .nav-short { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+            .main-col { display: block; padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+            .container { padding: 0 max(12px, env(safe-area-inset-left)) 0 max(12px, env(safe-area-inset-right)); margin: 12px auto; max-width: 560px; }
+            .compose-bar { flex-wrap: wrap; }
+            .compose-bar .rec-btn { flex: 1 1 auto; min-height: 48px; font-size: 17px; }
+            .compose-bar .post-btn { min-height: 48px; min-width: 72px; }
+            .compose-bar .rec-status { order: 3; flex: 1 1 100%; text-align: center; }
+            .rx-chip { padding: 6px 11px; font-size: 15px; }
+            .rx-picker summary { width: 38px; height: 34px; }
+            .rx-opt { width: 42px !important; height: 42px; font-size: 22px; }
+            .post-menu-btn { min-width: 40px; min-height: 40px; }
             .avatar-xl { width: 128px; height: 128px; font-size: 52px; }
             .crop-stage { width: 200px; height: 200px; }
         }
@@ -215,6 +257,7 @@
 {% set ep = request.endpoint or '' %}
 {% set view_user = request.view_args.get('username') if request.view_args else none %}
 {% set on_own_profile = ep == 'me' or (ep == 'user_profile' and view_user == session.get('username')) %}
+<header class="mobile-top"><a href="{% if session.user_id %}{{ url_for('index') }}{% else %}{{ url_for('login') }}{% endif %}">🧀 Cup O' Cheese</a></header>
 <div class="app-shell">
     <aside class="sidebar" aria-label="Site navigation">
         <div class="logo">
@@ -222,15 +265,15 @@
         </div>
         <nav class="sidebar-nav">
             {% if session.user_id %}
-                <a href="{{ url_for('index') }}" class="{% if ep == 'index' %}nav-active{% endif %}">The Back Draft</a>
-                <a href="{{ url_for('people') }}" class="{% if ep == 'people' %}nav-active{% endif %}">People</a>
-                <a href="{{ url_for('me') }}" class="{% if on_own_profile %}nav-active{% endif %}">{{ session.username }}{{ admin_badge(session.username) }}</a>
-                <a href="{{ url_for('edit_profile') }}" class="{% if ep == 'edit_profile' %}nav-active{% endif %}">Edit profile</a>
+                <a href="{{ url_for('index') }}" class="{% if ep == 'index' %}nav-active{% endif %}"{% if ep == 'index' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💨</span><span class="nav-label">The Back Draft</span><span class="nav-short" aria-hidden="true">Back Draft</span></a>
+                <a href="{{ url_for('people') }}" class="{% if ep == 'people' %}nav-active{% endif %}"{% if ep == 'people' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👥</span><span class="nav-label">People</span><span class="nav-short" aria-hidden="true">People</span></a>
+                <a href="{{ url_for('me') }}" class="{% if on_own_profile %}nav-active{% endif %}"{% if on_own_profile %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🧀</span><span class="nav-label">{{ session.username }}{{ admin_badge(session.username) }}</span><span class="nav-short" aria-hidden="true">Me</span></a>
+                <a href="{{ url_for('edit_profile') }}" class="{% if ep == 'edit_profile' %}nav-active{% endif %}"{% if ep == 'edit_profile' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">✏️</span><span class="nav-label">Edit profile</span><span class="nav-short" aria-hidden="true">Edit</span></a>
                 <div class="nav-spacer" aria-hidden="true"></div>
-                <a class="nav-muted" href="{{ url_for('logout') }}">Logout</a>
+                <a class="nav-muted" href="{{ url_for('logout') }}"><span class="nav-ico" aria-hidden="true">🚪</span><span class="nav-label">Logout</span><span class="nav-short" aria-hidden="true">Logout</span></a>
             {% else %}
-                <a href="{{ url_for('login') }}" class="{% if ep == 'login' %}nav-active{% endif %}">Login</a>
-                <a href="{{ url_for('register') }}" class="{% if ep == 'register' %}nav-active{% endif %}">Register</a>
+                <a href="{{ url_for('login') }}" class="{% if ep == 'login' %}nav-active{% endif %}"><span class="nav-ico" aria-hidden="true">🔑</span><span class="nav-label">Login</span><span class="nav-short" aria-hidden="true">Login</span></a>
+                <a href="{{ url_for('register') }}" class="{% if ep == 'register' %}nav-active{% endif %}"><span class="nav-ico" aria-hidden="true">🎟️</span><span class="nav-label">Register</span><span class="nav-short" aria-hidden="true">Register</span></a>
             {% endif %}
         </nav>
     </aside>
@@ -310,6 +353,13 @@
     });
   });
 })();
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function () {});
+  });
+}
 </script>
 
 </body>

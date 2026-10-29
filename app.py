@@ -2,6 +2,7 @@ import os
 import secrets
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory, g, jsonify, get_template_attribute
 from markupsafe import Markup
+import json
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import sqlite3
@@ -924,6 +925,48 @@ def edit_profile():
         username=session.get("username"),
     )
 
+
+
+# ---- PWA: manifest, service worker (root scope), offline fallback ----
+THEME_COLOR = "#c47a12"
+BG_COLOR = "#fff8e7"
+
+
+@app.route("/manifest.webmanifest")
+def pwa_manifest():
+    data = {
+        "name": "Cup O' Cheese",
+        "short_name": "Cup O' Cheese",
+        "description": "Invite-only audio social. Pitter patter, let's get at 'er.",
+        "id": "/",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "orientation": "portrait",
+        "theme_color": THEME_COLOR,
+        "background_color": BG_COLOR,
+        "icons": [
+            {"src": url_for("static", filename="icons/icon-192.png"), "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": url_for("static", filename="icons/icon-512.png"), "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": url_for("static", filename="icons/icon-maskable-512.png"), "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+        ],
+    }
+    resp = app.response_class(json.dumps(data, ensure_ascii=False), mimetype="application/manifest+json")
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
+@app.route("/sw.js")
+def service_worker():
+    resp = send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript", max_age=0)
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
+
+
+@app.route("/offline")
+def offline():
+    return render_template("offline.html")
 
 init_db()
 account_flow.register_routes(app, get_db)
