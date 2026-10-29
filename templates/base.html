@@ -65,12 +65,41 @@
         .top-body { flex: 1; min-width: 0; }
         select { width: 100%; padding: 12px; border: 1px solid #e0d0b0; border-radius: 6px; font-size: 16px; margin-bottom: 12px; background: #fff; }
         .nav-links .nav-user { margin-left: 0; font-weight: bold; }
-        .delete-form { margin: 10px 0 0; }
+        .delete-form { margin: 0; }
         .delete-btn {
-            width: auto; margin: 0; padding: 4px 10px; font-size: 12px; font-weight: 600;
-            background: transparent; color: #a33; border: 1px solid #e0b0b0; border-radius: 6px;
+            width: 100%; margin: 0; padding: 10px 14px; font-size: 14px; font-weight: 600;
+            background: transparent; color: #a33; border: none; border-radius: 0;
+            text-align: left; cursor: pointer;
         }
         .delete-btn:hover { background: #fff0f0; color: #822; }
+
+        .post-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+        .post-card-head .post-meta { flex: 1; margin-bottom: 0; }
+        .post-menu { position: relative; flex: 0 0 auto; }
+        .post-menu-btn {
+            width: 36px; height: 36px; margin: 0; padding: 0; border: none;
+            background: transparent; color: #7a6a55; font-size: 22px; line-height: 1;
+            border-radius: 50%; cursor: pointer; font-weight: bold;
+        }
+        .post-menu-btn:hover, .post-menu-btn[aria-expanded="true"] {
+            background: #fff8e7; color: #c47a12;
+        }
+        .post-menu-panel {
+            display: none; position: absolute; right: 0; top: 100%;
+            min-width: 140px; background: #fff; border: 1px solid #f0e0c0;
+            border-radius: 8px; box-shadow: 0 4px 16px rgba(43,33,24,.12);
+            z-index: 50; overflow: hidden; padding: 4px 0;
+        }
+        .post-menu.open .post-menu-panel { display: block; }
+        .post-menu-panel a, .post-menu-panel button {
+            display: block; width: 100%; margin: 0; padding: 10px 14px;
+            border: none; background: transparent; text-align: left;
+            font-size: 14px; font-weight: 600; color: #2b2118; text-decoration: none;
+            cursor: pointer; border-radius: 0;
+        }
+        .post-menu-panel a:hover { background: #fff8e7; color: #c47a12; }
+        .post-menu-panel .menu-danger { color: #a33; }
+        .post-menu-panel .menu-danger:hover { background: #fff0f0; color: #822; }
     </style>
 </head>
 <body>
@@ -98,5 +127,38 @@
         {% block content %}{% endblock %}
         <p class="tagline">Pitter patter, let's get at 'er. · cupocheese.com</p>
     </div>
+
+<script>
+(function () {
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest(".post-menu-btn");
+    var menus = document.querySelectorAll(".post-menu.open");
+    if (btn) {
+      e.preventDefault();
+      e.stopPropagation();
+      var menu = btn.closest(".post-menu");
+      var wasOpen = menu.classList.contains("open");
+      menus.forEach(function (m) {
+        m.classList.remove("open");
+        var b = m.querySelector(".post-menu-btn");
+        if (b) b.setAttribute("aria-expanded", "false");
+      });
+      if (!wasOpen) {
+        menu.classList.add("open");
+        btn.setAttribute("aria-expanded", "true");
+      }
+      return;
+    }
+    if (!e.target.closest(".post-menu")) {
+      menus.forEach(function (m) {
+        m.classList.remove("open");
+        var b = m.querySelector(".post-menu-btn");
+        if (b) b.setAttribute("aria-expanded", "false");
+      });
+    }
+  });
+})();
+</script>
+
 </body>
 </html>

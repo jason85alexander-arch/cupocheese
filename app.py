@@ -9,13 +9,17 @@ import account_flow
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("CUPOCHEESE_SECRET", "cupocheese-dev-secret-change-me")
-DATABASE = "cupocheese.db"
+# Durable data root: on Render, CUPOCHEESE_DATA_DIR=/var/data (persistent disk).
+# Local/dev: unset → project directory (current behavior).
+DATA_DIR = os.environ.get("CUPOCHEESE_DATA_DIR") or os.path.dirname(os.path.abspath(__file__))
+DATABASE = os.path.join(DATA_DIR, "cupocheese.db")
 LINK_HOURS = 1
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+UPLOAD_FOLDER = os.path.join(DATA_DIR, "uploads")
 MAX_AUDIO_BYTES = 15 * 1024 * 1024
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 ALLOWED_AUDIO_EXT = {".webm", ".ogg", ".mp4", ".m4a", ".wav", ".mp3"}
 ALLOWED_AVATAR_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["MAX_CONTENT_LENGTH"] = max(MAX_AUDIO_BYTES, MAX_AVATAR_BYTES) + 64 * 1024
 
@@ -63,6 +67,11 @@ def can_delete_post(viewer, post_user_id):
     if viewer["id"] == post_user_id:
         return True
     return is_admin_user(viewer)
+
+
+def can_manage_post(viewer, post_user_id):
+    """Author or admin may edit text or delete."""
+    return can_delete_post(viewer, post_user_id)
 
 def init_db():
     with get_db() as db:
@@ -137,7 +146,7 @@ def index():
             "created_at": row["created_at"],
             "audio_path": row["audio_path"],
             "username": row["username"],
-            "can_delete": can_delete_post(viewer, row["user_id"]),
+            "can_manage": can_manage_post(viewer, row["user_id"]),
         })
     return render_template(
         "feed.html",
@@ -331,6 +340,53 @@ def delete_post(post_id):
     return redirect(dest)
 
 
+@app.route("/post/<int:post_id>/edit", methods=["GET", "POST"])
+def edit_post(post_id):
+    viewer = require_user()
+    if not viewer:
+        return redirect(url_for("login"))
+    db = get_db()
+    post = db.execute(
+        "SELECT id, user_id, content, audio_path, created_at FROM posts WHERE id = ?",
+        (post_id,),
+    ).fetchone()
+    if not post:
+        flash("That post is gone.")
+        return redirect(url_for("index"))
+    if not can_manage_post(viewer, post["user_id"]):
+        flash("You can only edit your own posts.")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        content = request.form.get("content", "").strip()
+        audio = post["audio_path"]
+        if not content and not audio:
+            flash("Add some text or keep a clip — empty posts aren't allowed.")
+            return render_template(
+                "edit_post.html",
+                post=post,
+                content="",
+                username=session.get("username"),
+            )
+        db.execute(
+            "UPDATE posts SET content = ? WHERE id = ?",
+            (content, post_id),
+        )
+        db.commit()
+        flash("Post updated.")
+        dest = request.form.get("next") or request.referrer or url_for("index")
+        if dest and f"/post/{post_id}/edit" in dest:
+            dest = url_for("index")
+        return redirect(dest)
+
+    return render_template(
+        "edit_post.html",
+        post=post,
+        content=post["content"] or "",
+        username=session.get("username"),
+    )
+
+
 def _parse_optional_post_id(raw):
     raw = (raw or "").strip()
     if not raw:
@@ -395,7 +451,7 @@ def user_profile(username):
             "content": post["content"],
             "created_at": post["created_at"],
             "audio_path": post["audio_path"],
-            "can_delete": is_owner or viewer_admin,
+            "can_manage": is_owner or viewer_admin,
         })
     return render_template(
         "profile.html",

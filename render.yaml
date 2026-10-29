@@ -2,11 +2,17 @@ services:
   - type: web
     name: cupocheese
     runtime: python
-    plan: free
+    plan: 0.5c-512mb
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    disk:
+      name: cupocheese-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: CUPOCHEESE_SECRET
         generateValue: true
       - key: CUPOCHEESE_INVITE
         value: owner-only-cupocheese
+      - key: CUPOCHEESE_DATA_DIR
+        value: /var/data

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Edit post - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 class="section-title">Edit post</h1>
+    <p class="muted">Tweak the text — your clip stays put.</p>
+    <form method="post">
+        <textarea name="content" rows="5" placeholder="What's fermenting?">{{ content }}</textarea>
+        {% if post.audio_path %}
+        <audio class="post-audio" controls preload="none" src="{{ url_for('serve_clip', filename=post.audio_path) }}"></audio>
+        <p class="muted" style="margin-top:8px;">Clip attached (unchanged).</p>
+        {% endif %}
+        <div class="compose-bar" style="margin-top:12px;">
+            <a class="btn-secondary" href="{{ request.referrer or url_for('index') }}">Cancel</a>
+            <button type="submit" style="width:auto;margin:0;flex:1;">Save</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
