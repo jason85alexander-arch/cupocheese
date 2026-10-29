@@ -1,6 +1,7 @@
 import os
 import secrets
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory, g
+from markupsafe import Markup
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import sqlite3
@@ -71,6 +72,34 @@ def is_admin_user(user):
         pass
     uname = (user["username"] or "").strip().lower()
     return bool(uname) and uname in _admin_usernames()
+
+
+def _admin_name_set():
+    """Lowercased usernames of all admins (DB flag + CUPOCHEESE_ADMINS), cached per request."""
+    cached = getattr(g, "_admin_names", None)
+    if cached is not None:
+        return cached
+    names = set(_admin_usernames())
+    try:
+        db = get_db()
+        for r in db.execute("SELECT username FROM users WHERE COALESCE(is_admin, 0) = 1"):
+            if r["username"]:
+                names.add(r["username"].strip().lower())
+        db.close()
+    except sqlite3.Error:
+        pass
+    g._admin_names = names
+    return names
+
+
+@app.context_processor
+def _inject_admin_badge():
+    def admin_badge(username):
+        uname = (username or "").strip().lower()
+        if uname and uname in _admin_name_set():
+            return Markup(' <span class="admin-badge" title="Admin" aria-label="Admin">💩</span>')
+        return ""
+    return {"admin_badge": admin_badge}
 
 
 def can_delete_post(viewer, post_user_id):

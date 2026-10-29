@@ -9,7 +9,7 @@
         <div class="avatar avatar-xl avatar-placeholder" aria-hidden="true">🧀</div>
         {% endif %}
         <div class="profile-meta">
-            <h1 class="profile-name">{{ profile.username }}</h1>
+            <h1 class="profile-name">{{ profile.username }}{{ admin_badge(profile.username) }}</h1>
             <p class="profile-sub">Member of the Cup · top shelf only</p>
             {% if is_owner %}
             <a class="btn-secondary" href="{{ url_for('edit_profile') }}">Edit profile</a>
@@ -84,7 +84,7 @@
                         <img class="avatar avatar-sm" src="{{ url_for('serve_avatar', filename=bp.author_avatar) }}" alt="">
                         {% else %}
                         <span class="avatar avatar-sm avatar-placeholder" aria-hidden="true">🧀</span>
-                        {% endif %}<strong>{{ bp.author_username }}</strong></a>
+                        {% endif %}<strong>{{ bp.author_username }}{{ admin_badge(bp.author_username) }}</strong></a>
                     {% else %}
                     <span class="avatar avatar-sm avatar-placeholder" aria-hidden="true">🧀</span><strong>former member</strong>
                     {% endif %}
