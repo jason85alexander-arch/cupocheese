@@ -108,7 +108,29 @@ def _inject_admin_badge():
         if uname and uname in _admin_name_set():
             return Markup(' <span class="admin-badge" title="Admin" aria-label="Admin">💩</span>')
         return ""
-    return {"admin_badge": admin_badge, "viewer_is_admin": _viewer_is_admin}
+    def member_no(username):
+        """Admin-only join-order badge like '#3'. Empty for non-admins."""
+        if not _viewer_is_admin():
+            return ""
+        uname = (username or "").strip().lower()
+        if not uname:
+            return ""
+        nums = getattr(g, "_member_nos", None)
+        if nums is None:
+            nums = {}
+            try:
+                db = get_db()
+                for r in db.execute("SELECT username, member_no FROM users WHERE member_no IS NOT NULL"):
+                    nums[(r["username"] or "").strip().lower()] = r["member_no"]
+                db.close()
+            except sqlite3.Error:
+                pass
+            g._member_nos = nums
+        n = nums.get(uname)
+        if not n:
+            return ""
+        return Markup(f' <span class="member-no" title="Member #{n} (join order, admins only)">#{n}</span>')
+    return {"admin_badge": admin_badge, "viewer_is_admin": _viewer_is_admin, "member_no": member_no}
 
 
 def _viewer_is_admin():
@@ -187,9 +209,14 @@ def init_db():
             ("top2_post_id", "INTEGER"),
             ("top3_post_id", "INTEGER"),
             ("is_admin", "INTEGER DEFAULT 0"),
+            ("member_no", "INTEGER"),
         ):
             if col not in cols:
                 db.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
+        # Join-order member numbers (#1 = first account). Assigned once, never renumbered.
+        for r in db.execute("SELECT id FROM users WHERE member_no IS NULL ORDER BY id").fetchall():
+            nxt = db.execute("SELECT COALESCE(MAX(member_no), 0) + 1 FROM users").fetchone()[0]
+            db.execute("UPDATE users SET member_no = ? WHERE id = ?", (nxt, r["id"]))
         # Promote owner: first user (id=1) or sole remaining user if no admin yet
         admin_n = db.execute(
             "SELECT COUNT(*) AS n FROM users WHERE COALESCE(is_admin, 0) = 1"
@@ -755,7 +782,8 @@ def register():
         now = datetime.utcnow().isoformat()
         try:
             cur = db.execute(
-                "INSERT INTO users (username, email, password_hash, created_at, is_admin) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO users (username, email, password_hash, created_at, is_admin, member_no) "
+                "VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(member_no), 0) + 1 FROM users))",
                 (username, email, generate_password_hash(password), now, 1 if bootstrap else 0)
             )
             new_id = cur.lastrowid

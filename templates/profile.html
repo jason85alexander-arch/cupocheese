@@ -10,7 +10,7 @@
         <div class="avatar avatar-xl avatar-placeholder" aria-hidden="true">🧀</div>
         {% endif %}
         <div class="profile-meta">
-            <h1 class="profile-name">{{ profile.username }}{{ admin_badge(profile.username) }}</h1>
+            <h1 class="profile-name">{{ profile.username }}{{ admin_badge(profile.username) }}{{ member_no(profile.username) }}</h1>
             <p class="profile-sub">Member of the Cup · top shelf only</p>
             {% if squeak_wins %}<p><span class="squeak-badge" title="Cheek Squeak O' the Week wins">🏆×{{ squeak_wins }} Cheek Squeak O' the Week</span></p>{% endif %}
             {% if is_owner %}

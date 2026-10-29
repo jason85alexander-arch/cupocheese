@@ -19,7 +19,7 @@
         <div class="avatar avatar-md avatar-placeholder" aria-hidden="true">🧀</div>
         {% endif %}
         <div class="people-meta">
-            <strong class="people-name">{{ m.username }}{{ admin_badge(m.username) }}</strong>
+            <strong class="people-name">{{ m.username }}{{ admin_badge(m.username) }}{{ member_no(m.username) }}</strong>
             {% if m.is_you %}
             <span class="muted"> · that's you</span>
             {% endif %}

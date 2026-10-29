@@ -53,7 +53,7 @@
             </div>
             <div class="post-meta">Made by {{ inv.creator_name or 'someone' }}{{ admin_badge(inv.creator_name) }} · {{ inv.created_at|ct_time }}</div>
             {% if inv.status == 'used' %}
-            <div class="post-meta">Used by {% if inv.used_name %}<a href="{{ url_for('user_profile', username=inv.used_name) }}">{{ inv.used_name }}</a>{{ admin_badge(inv.used_name) }}{% else %}a deleted member{% endif %} · {{ inv.used_at|ct_time }}</div>
+            <div class="post-meta">Used by {% if inv.used_name %}<a href="{{ url_for('user_profile', username=inv.used_name) }}">{{ inv.used_name }}</a>{{ admin_badge(inv.used_name) }}{{ member_no(inv.used_name) }}{% else %}a deleted member{% endif %} · {{ inv.used_at|ct_time }}</div>
             {% else %}
             <div class="post-meta">Revoked by {{ inv.revoker_name or 'someone' }} · {{ inv.revoked_at|ct_time }}</div>
             {% endif %}
