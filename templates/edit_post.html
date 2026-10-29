@@ -1,11 +1,21 @@
 {% extends "base.html" %}
-{% block title %}Edit post - Cup O' Cheese{% endblock %}
+{% block title %}Edit post - Cup O' Cheese<script>
+(function () {
+  var c = document.getElementById("edit-content"), n = document.getElementById("edit-count");
+  if (!c || !n) return;
+  var max = {{ post_max }};
+  function upd() { n.textContent = c.value.length + "/" + max; n.classList.toggle("over", c.value.length >= max); }
+  c.addEventListener("input", upd); upd();
+})();
+</script>
+{% endblock %}
 {% block content %}
 <div class="card">
     <h1 class="section-title">Edit post</h1>
     <p class="muted">Tweak the text — your clip stays put.</p>
     <form method="post">
-        <textarea name="content" rows="5" placeholder="What's fermenting?">{{ content }}</textarea>
+        <textarea name="content" id="edit-content" rows="5" maxlength="{{ post_max }}" placeholder="What's fermenting?">{{ content }}</textarea>
+        <div class="char-count muted" id="edit-count" aria-live="polite">{{ content|length }}/{{ post_max }}</div>
         {% if post.audio_path %}
         <audio class="post-audio" controls preload="none" src="{{ url_for('serve_clip', filename=post.audio_path) }}"></audio>
         <p class="muted" style="margin-top:8px;">Clip attached (unchanged).</p>
@@ -16,4 +26,13 @@
         </div>
     </form>
 </div>
+<script>
+(function () {
+  var c = document.getElementById("edit-content"), n = document.getElementById("edit-count");
+  if (!c || !n) return;
+  var max = {{ post_max }};
+  function upd() { n.textContent = c.value.length + "/" + max; n.classList.toggle("over", c.value.length >= max); }
+  c.addEventListener("input", upd); upd();
+})();
+</script>
 {% endblock %}

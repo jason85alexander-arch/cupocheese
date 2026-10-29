@@ -3,13 +3,14 @@
 {% block content %}
 <h1 class="profile-name feed-heading">💨 The Back Draft</h1>
 <div class="card">
-    <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data" id="compose-form">
-        <textarea name="content" id="compose-content" rows="3" placeholder="What's fermenting? Float a biscuit…"></textarea>
+    <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data" id="compose-form" data-require-audio="{{ '0' if is_admin else '1' }}" data-max="{{ post_max }}">
+        <textarea name="content" id="compose-content" rows="3" maxlength="{{ post_max }}" placeholder="What's fermenting? Float a biscuit…"></textarea>
+        <div class="char-count muted" id="compose-count" aria-live="polite">0/{{ post_max }}</div>
         <input type="file" name="audio" id="audio-file" accept="audio/webm,audio/ogg,audio/mp4,audio/*,.webm,.ogg,.mp4,.m4a,.wav,.mp3" hidden>
         <div class="compose-bar">
             <button type="button" id="rec-btn" class="rec-btn" aria-pressed="false">Record</button>
-            <span id="rec-status" class="rec-status" aria-live="polite"></span>
-            <button type="submit" class="post-btn" aria-label="Post" id="post-btn">💨</button>
+            <span id="rec-status" class="rec-status" aria-live="polite">{% if not is_admin %}Record a toot to post{% endif %}</span>
+            <button type="submit" class="post-btn" aria-label="Post" id="post-btn"{% if not is_admin %} disabled title="Record a toot to post"{% endif %}>💨</button>
         </div>
         <audio id="rec-preview" class="rec-preview" controls hidden></audio>
     </form>
@@ -66,8 +67,25 @@
   var recordedBlob = null;
   var recordedMime = "";
   var submitting = false;
+  var requireAudio = form.getAttribute("data-require-audio") === "1";
+  var maxChars = parseInt(form.getAttribute("data-max"), 10) || 140;
+  var countEl = document.getElementById("compose-count");
 
   function setStatus(t) { statusEl.textContent = t || ""; }
+  function hasClip() {
+    return !!(recordedBlob && recordedBlob.size) || !!(fileInput.files && fileInput.files.length > 0);
+  }
+  function refreshState() {
+    var n = content.value.length;
+    countEl.textContent = n + "/" + maxChars;
+    countEl.classList.toggle("over", n >= maxChars);
+    if (submitting) return;
+    var blocked = (requireAudio && !hasClip()) || n > maxChars;
+    postBtn.disabled = blocked;
+    postBtn.title = (requireAudio && !hasClip()) ? "Record a toot to post" : "";
+  }
+  content.addEventListener("input", refreshState);
+  fileInput.addEventListener("change", function () { refreshState(); if (hasClip()) setStatus("Clip ready"); });
 
   function pickMime() {
     var types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
@@ -109,6 +127,7 @@
     preview.src = URL.createObjectURL(b);
     preview.hidden = false;
     setStatus("Clip ready (" + Math.max(1, Math.round(b.size / 1024)) + " KB)");
+    refreshState();
   }
 
   async function startRec() {
@@ -168,6 +187,8 @@
     else startRec();
   });
 
+  refreshState();
+
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     if (submitting) return;
@@ -178,6 +199,14 @@
     var text = content.value.trim();
     var hasFile = fileInput.files && fileInput.files.length > 0;
     var hasBlob = !!(recordedBlob && recordedBlob.size);
+    if (requireAudio && !hasFile && !hasBlob) {
+      setStatus("Record a toot to post");
+      return;
+    }
+    if (text.length > maxChars) {
+      setStatus("Keep it under " + maxChars + " characters");
+      return;
+    }
     if (!text && !hasFile && !hasBlob) {
       setStatus("Add text or a clip");
       content.focus();
@@ -208,7 +237,7 @@
       window.location.href = "/";
     }).catch(function () {
       submitting = false;
-      postBtn.disabled = false;
+      refreshState();
       setStatus("Post failed — try again");
       /* last resort: native multipart submit */
       form.submit();

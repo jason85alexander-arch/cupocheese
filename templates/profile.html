@@ -60,13 +60,14 @@
 <div class="card" id="board">
     <h2 class="section-title">🧀 Cheese Board</h2>
     <p class="muted" style="margin-top:-6px">A place for friends to stink it up</p>
-    <form action="{{ url_for('board_post', username=profile.username) }}" method="post" enctype="multipart/form-data" id="board-form">
+    <form action="{{ url_for('board_post', username=profile.username) }}" method="post" enctype="multipart/form-data" id="board-form" data-require-audio="{{ '0' if is_admin else '1' }}" data-max="{{ board_max }}">
         <textarea name="body" id="board-body" rows="2" maxlength="{{ board_max }}" placeholder="{% if is_owner %}Pin a note to your own board…{% else %}Say cheese to {{ profile.username }}…{% endif %}"></textarea>
+        <div class="char-count muted" id="board-count" aria-live="polite">0/{{ board_max }}</div>
         <input type="file" name="audio" id="board-audio" accept="audio/webm,audio/ogg,audio/mp4,audio/*,.webm,.ogg,.mp4,.m4a,.wav,.mp3" hidden>
         <div class="compose-bar">
             <button type="button" id="board-rec-btn" class="rec-btn" aria-pressed="false">Record</button>
-            <span id="board-rec-status" class="rec-status" aria-live="polite"></span>
-            <button type="submit" class="post-btn" aria-label="Post to board" id="board-post-btn">🧀</button>
+            <span id="board-rec-status" class="rec-status" aria-live="polite">{% if not is_admin %}Record a toot to post{% endif %}</span>
+            <button type="submit" class="post-btn" aria-label="Post to board" id="board-post-btn"{% if not is_admin %} disabled title="Record a toot to post"{% endif %}>🧀</button>
         </div>
         <audio id="board-rec-preview" class="rec-preview" controls hidden></audio>
     </form>
@@ -127,7 +128,23 @@
   var preview = document.getElementById("board-rec-preview");
   var recorder = null, chunks = [], stream = null, recordedBlob = null, recordedMime = "", submitting = false;
 
+  var requireAudio = form.getAttribute("data-require-audio") === "1";
+  var maxChars = parseInt(form.getAttribute("data-max"), 10) || 140;
+  var countEl = document.getElementById("board-count");
   function setStatus(t) { statusEl.textContent = t || ""; }
+  function hasClip() {
+    return !!(recordedBlob && recordedBlob.size) || !!(fileInput.files && fileInput.files.length > 0);
+  }
+  function refreshState() {
+    var n = content.value.length;
+    countEl.textContent = n + "/" + maxChars;
+    countEl.classList.toggle("over", n >= maxChars);
+    if (submitting) return;
+    postBtn.disabled = (requireAudio && !hasClip()) || n > maxChars;
+    postBtn.title = (requireAudio && !hasClip()) ? "Record a toot to post" : "";
+  }
+  content.addEventListener("input", refreshState);
+  fileInput.addEventListener("change", function () { refreshState(); if (hasClip()) setStatus("Clip ready"); });
   function pickMime() {
     var types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
     for (var i = 0; i < types.length; i++) {
@@ -154,6 +171,7 @@
     preview.src = URL.createObjectURL(b);
     preview.hidden = false;
     setStatus("Clip ready (" + Math.max(1, Math.round(b.size / 1024)) + " KB)");
+    refreshState();
   }
   async function startRec() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setStatus("Mic not supported here"); return; }
@@ -182,6 +200,7 @@
   recBtn.addEventListener("click", function () {
     if (recorder && recorder.state === "recording") stopRec(); else startRec();
   });
+  refreshState();
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     if (submitting) return;
@@ -189,6 +208,8 @@
     var text = content.value.trim();
     var hasFile = fileInput.files && fileInput.files.length > 0;
     var hasBlob = !!(recordedBlob && recordedBlob.size);
+    if (requireAudio && !hasFile && !hasBlob) { setStatus("Record a toot to post"); return; }
+    if (text.length > maxChars) { setStatus("Keep it under " + maxChars + " characters"); return; }
     if (!text && !hasFile && !hasBlob) { setStatus("Add text or a clip"); content.focus(); return; }
     submitting = true; postBtn.disabled = true; setStatus("Pinning…");
     var fd = new FormData();
@@ -202,7 +223,7 @@
         window.location.reload();
       })
       .catch(function () {
-        submitting = false; postBtn.disabled = false;
+        submitting = false; refreshState();
         setStatus("Post failed — try again");
       });
   });

@@ -18,6 +18,9 @@ LINK_HOURS = 1
 UPLOAD_FOLDER = os.path.join(DATA_DIR, "uploads")
 MAX_AUDIO_BYTES = 15 * 1024 * 1024
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
+POST_MAX_CHARS = 140
+MSG_TOO_LONG = f"Keep it under {POST_MAX_CHARS} characters — let the fart do the talking."
+MSG_NO_TOOT = "No toot, no post! Record a clip first."
 ALLOWED_AUDIO_EXT = {".webm", ".ogg", ".mp4", ".m4a", ".wav", ".mp3"}
 ALLOWED_AVATAR_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 try:
@@ -178,6 +181,7 @@ def index():
         posts=posts,
         username=session.get("username"),
         is_admin=is_admin_user(viewer),
+        post_max=POST_MAX_CHARS,
     )
 
 # Only you can create an account for now. Change this env var to rotate the invite.
@@ -275,39 +279,17 @@ def create_post():
     if not user:
         return redirect(url_for("login"))
     content = request.form.get("content", "").strip()
-    clip = request.files.get("audio")
-    clip_name = None
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    if clip and getattr(clip, "filename", None):
-        raw_name = clip.filename or "clip.webm"
-        name = secure_filename(raw_name) or "clip.webm"
-        ext = os.path.splitext(name)[1].lower()
-        if not ext:
-            ctype = (clip.mimetype or "").lower()
-            if "ogg" in ctype:
-                ext = ".ogg"
-            elif "mp4" in ctype or "m4a" in ctype or "aac" in ctype:
-                ext = ".mp4"
-            elif "wav" in ctype:
-                ext = ".wav"
-            elif "mpeg" in ctype or "mp3" in ctype:
-                ext = ".mp3"
-            else:
-                ext = ".webm"
-        if ext in ALLOWED_AUDIO_EXT:
-            clip_name = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_" + secrets.token_hex(8) + ext
-            dest = os.path.join(UPLOAD_FOLDER, clip_name)
-            try:
-                clip.save(dest)
-                if os.path.getsize(dest) == 0 or os.path.getsize(dest) > MAX_AUDIO_BYTES:
-                    os.remove(dest)
-                    clip_name = None
-                    flash("Clip could not be saved (empty or too large).")
-            except OSError:
-                clip_name = None
-                flash("Could not store clip on server.")
-        else:
-            flash("Unsupported audio type. Try recording again.")
+    admin = is_admin_user(user)
+    if len(content) > POST_MAX_CHARS:
+        flash(MSG_TOO_LONG)
+        return redirect(url_for("index"))
+    clip_name, err = _save_audio_upload(request.files.get("audio"), prefix="")
+    if err:
+        flash(err)
+        return redirect(url_for("index"))
+    if not clip_name and not admin:
+        flash(MSG_NO_TOOT)
+        return redirect(url_for("index"))
     if not content and not clip_name:
         flash("Add some text or a clip before posting.")
         return redirect(url_for("index"))
@@ -388,12 +370,22 @@ def edit_post(post_id):
     if request.method == "POST":
         content = request.form.get("content", "").strip()
         audio = post["audio_path"]
+        if len(content) > POST_MAX_CHARS:
+            flash(MSG_TOO_LONG)
+            return render_template(
+                "edit_post.html",
+                post=post,
+                content=content[:POST_MAX_CHARS],
+                post_max=POST_MAX_CHARS,
+                username=session.get("username"),
+            )
         if not content and not audio:
             flash("Add some text or keep a clip — empty posts aren't allowed.")
             return render_template(
                 "edit_post.html",
                 post=post,
                 content="",
+                post_max=POST_MAX_CHARS,
                 username=session.get("username"),
             )
         db.execute(
@@ -411,6 +403,7 @@ def edit_post(post_id):
         "edit_post.html",
         post=post,
         content=post["content"] or "",
+        post_max=POST_MAX_CHARS,
         username=session.get("username"),
     )
 
@@ -493,7 +486,7 @@ def user_profile(username):
     )
 
 
-BOARD_MAX_CHARS = 1000
+BOARD_MAX_CHARS = POST_MAX_CHARS
 BOARD_LIST_LIMIT = 100
 
 
@@ -506,7 +499,7 @@ def can_delete_board_post(viewer, board_post):
     return is_admin_user(viewer)
 
 
-def _save_audio_upload(clip):
+def _save_audio_upload(clip, prefix="bd_"):
     """Save an uploaded audio clip into UPLOAD_FOLDER. Returns (filename|None, error|None)."""
     if not clip or not getattr(clip, "filename", None):
         return None, None
@@ -527,7 +520,7 @@ def _save_audio_upload(clip):
     if ext not in ALLOWED_AUDIO_EXT:
         return None, "Unsupported audio type. Try recording again."
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    clip_name = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_bd_" + secrets.token_hex(8) + ext
+    clip_name = datetime.utcnow().strftime("%Y%m%d%H%M%S") + "_" + prefix + secrets.token_hex(8) + ext
     dest = os.path.join(UPLOAD_FOLDER, clip_name)
     try:
         clip.save(dest)
@@ -580,11 +573,15 @@ def board_post(username):
     back = url_for("user_profile", username=owner["username"]) + "#board"
     body = (request.form.get("body") or "").strip()
     if len(body) > BOARD_MAX_CHARS:
-        flash(f"Keep it under {BOARD_MAX_CHARS} characters — it's a cheese board, not a novel.")
+        flash(MSG_TOO_LONG)
         return redirect(back)
     clip_name, err = _save_audio_upload(request.files.get("audio"))
     if err:
         flash(err)
+        return redirect(back)
+    if not clip_name and not is_admin_user(viewer):
+        flash(MSG_NO_TOOT)
+        return redirect(back)
     if not body and not clip_name:
         flash("Add some words or a clip before slapping it on the board.")
         return redirect(back)
