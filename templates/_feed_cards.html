@@ -1,0 +1,55 @@
+{% from "_reactions.html" import reaction_bar, geek_badge %}
+{% for post in posts %}
+{% set is_board = post.kind == 'board' %}
+<div class="card{% if post.pinned %} post-pinned{% endif %}{% if is_board %} board-toot{% endif %}{% if post.self_reacted %} self-reacted{% endif %}" id="{{ 'bp' if is_board else 'post' }}-{{ post.id }}" data-geek="{{ post.kind }}:{{ post.id }}">
+    {% if post.pinned %}<div class="pin-label">📌 Pinned</div>{% endif %}
+    {{ geek_badge(post.self_reacted) }}
+    <div class="post-card-head">
+        <div class="post-meta">
+            {% if post.username and post.username != 'unknown' %}
+            <strong><a href="{{ url_for('user_profile', username=post.username) }}">{{ post.username }}</a>{{ admin_badge(post.username) }}{{ member_no(post.username) }}</strong>
+            {% else %}
+            <strong>{{ 'former member' if is_board else post.username }}</strong>
+            {% endif %}
+            {% if is_board %}<span class="board-on">💨 on {% if post.board_owner %}<a href="{{ url_for('user_profile', username=post.board_owner) }}#board">{{ post.board_owner }}'s Cheese Board</a>{{ admin_badge(post.board_owner) }}{{ member_no(post.board_owner) }}{% else %}a Cheese Board{% endif %}</span>{% endif %}
+            · {{ post.created_at[:16].replace('T', ' ') }}
+        </div>
+        {% if post.can_manage and is_board %}
+        <div class="post-menu">
+            <button type="button" class="post-menu-btn" aria-label="Board post options" aria-expanded="false" aria-haspopup="true">⋯</button>
+            <div class="post-menu-panel" role="menu">
+                <form class="delete-form" action="{{ url_for('delete_board_post', post_id=post.id) }}" method="post"
+                      onsubmit="return confirm('Scrape this off the board?');">
+                    <input type="hidden" name="next" value="{{ url_for('index') }}">
+                    <button type="submit" class="delete-btn menu-danger" role="menuitem">Delete</button>
+                </form>
+            </div>
+        </div>
+        {% elif post.can_manage %}
+        <div class="post-menu">
+            <button type="button" class="post-menu-btn" aria-label="Post options" aria-expanded="false" aria-haspopup="true">⋯</button>
+            <div class="post-menu-panel" role="menu">
+{% if post.can_pin %}
+                <form class="pin-form" action="{{ url_for('pin_post', post_id=post.id) }}" method="post">
+                    <input type="hidden" name="action" value="{{ 'unpin' if post.pinned else 'pin' }}">
+                    <button type="submit" class="pin-btn" role="menuitem">{{ '📌 Unpin' if post.pinned else '📌 Pin to top' }}</button>
+                </form>
+                {% endif %}
+                <a role="menuitem" href="{{ url_for('edit_post', post_id=post.id) }}">Edit</a>
+                <form class="delete-form" action="{{ url_for('delete_post', post_id=post.id) }}" method="post"
+                      onsubmit="return confirm('Delete this post?');">
+                    <button type="submit" class="delete-btn menu-danger" role="menuitem">Delete</button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% if post.content %}
+    <div style="margin-top:8px;{% if is_board %} white-space:pre-wrap; word-wrap:break-word;{% endif %}">{{ post.content }}</div>
+    {% endif %}
+    {% if post.audio_path %}
+    <audio class="post-audio" controls preload="none" src="{{ url_for('serve_clip', filename=post.audio_path) }}"></audio>
+    {% endif %}
+    {{ reaction_bar(post.kind, post.id, post.reactions) }}
+</div>
+{% endfor %}

@@ -1,6 +1,10 @@
 import os
 import secrets
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory, g, jsonify, get_template_attribute, abort
+import fcntl
+import hashlib
+import threading
+import time
+from flask import Flask, has_app_context, render_template, request, redirect, url_for, session, flash, send_from_directory, g, jsonify, get_template_attribute, abort
 from markupsafe import Markup
 import json
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -46,10 +50,51 @@ except OSError:
 app.config["MAX_CONTENT_LENGTH"] = max(MAX_AUDIO_BYTES, MAX_AVATAR_BYTES) + 64 * 1024
 
 
-def get_db():
-    conn = sqlite3.connect(DATABASE)
+class _RequestConnection(sqlite3.Connection):
+    """The one shared connection for a request/app context.
+
+    Legacy helpers call db.close() on what used to be a private connection; that is now a
+    no-op so they can't close the request's connection under the caller. Teardown really closes it.
+    """
+
+    def close(self):
+        pass
+
+    def really_close(self):
+        sqlite3.Connection.close(self)
+
+
+def _connect(factory=sqlite3.Connection):
+    # timeout + busy_timeout: wait up to 5 s for another worker's write lock instead of erroring.
+    conn = sqlite3.connect(DATABASE, timeout=5.0, factory=factory)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
+
+
+def get_db():
+    """One connection per request (reused for every query, closed on teardown).
+
+    Outside an app/request context (startup, scripts) a fresh private connection is returned.
+    """
+    if has_app_context():
+        conn = g.get("_db")
+        if conn is None:
+            conn = g._db = _connect(_RequestConnection)
+        return conn
+    return _connect()
+
+
+@app.teardown_appcontext
+def _close_db(exc):
+    conn = g.pop("_db", None)
+    if conn is not None:
+        try:
+            if conn.in_transaction:
+                conn.rollback()
+        finally:
+            conn.really_close()
+
 
 def require_user():
     """Return user row or None; clears stale sessions after ephemeral DB wipe."""
@@ -171,7 +216,26 @@ def can_manage_post(viewer, post_user_id):
     return can_delete_post(viewer, post_user_id)
 
 def init_db():
-    with get_db() as db:
+    """Create/migrate the schema. Safe with several gunicorn workers starting at once:
+    an exclusive file lock serializes migrations (gunicorn.conf.py also preloads, so it
+    normally runs once in the master before forking)."""
+    lock = open(os.path.join(DATA_DIR, ".migrate.lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        db = _connect()
+        try:
+            # WAL: readers never block the writer (persistent setting stored in the DB file).
+            db.execute("PRAGMA journal_mode=WAL")
+            _init_db_locked(db)
+        finally:
+            db.close()
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+
+
+def _init_db_locked(db):
+    with db:
         db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -202,6 +266,7 @@ def init_db():
             db.execute("ALTER TABLE posts ADD COLUMN pinned_at TEXT")
         if "self_reacted_at" not in post_cols:
             db.execute("ALTER TABLE posts ADD COLUMN self_reacted_at TEXT")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_posts_pinned ON posts (pinned_at)")
         # Profile fields (avatar + self-selected top 3 posts)
         cols = {row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()}
         for col, typ in (
@@ -502,16 +567,37 @@ def top_post_between(db, start_utc, end_utc):
     ).fetchone()
 
 
+# Per-process cache of the weekly award check. A decided award never changes, so it is cached
+# for good; "no winner yet" is cached until a new reaction appears (or a 5-minute TTL).
+# Cross-worker safety comes from awards.week_start UNIQUE + INSERT OR IGNORE.
+_AWARD_CACHE = {}
+_AWARD_LOCK = threading.Lock()
+AWARD_MISS_TTL = 300.0
+
+
 def ensure_weekly_award(db, now_utc=None):
     """Lazily decide last completed week's winner (idempotent). Returns the award row or None."""
     week_start, start, end = week_bounds(now_utc, weeks_back=1)
     key = week_start.isoformat()
+    ck = (DATABASE, key)
+    hit = _AWARD_CACHE.get(ck)
+    if hit is not None and hit[0] is None:
+        return hit[1]  # decided award: never changes
+    # "No winner yet" stays valid until any new reaction lands (checked via O(1) MAX(rowid)),
+    # so other workers' reactions are seen immediately; TTL is just a safety net.
+    max_rx = db.execute("SELECT COALESCE(MAX(id), 0) FROM reactions").fetchone()[0]
+    if hit is not None and hit[2] == max_rx and hit[0] > time.monotonic():
+        return None
     row = db.execute("SELECT * FROM awards WHERE week_start = ?", (key,)).fetchone()
     if row:
+        with _AWARD_LOCK:
+            _AWARD_CACHE[ck] = (None, row, None)
         return row
     win = top_post_between(db, start, end)
     if not win:
-        return None  # nobody reacted; re-checked cheaply on later requests
+        with _AWARD_LOCK:
+            _AWARD_CACHE[ck] = (time.monotonic() + AWARD_MISS_TTL, None, max_rx)
+        return None  # nobody reacted; re-checked after the short TTL
     cur = db.execute(
         "INSERT OR IGNORE INTO awards (week_start, post_id, user_id, reaction_count, created_at, target_type) "
         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -520,7 +606,11 @@ def ensure_weekly_award(db, now_utc=None):
     if cur.rowcount == 1:
         notify(db, win["user_id"], None, "award", win["kind"], win["id"])
     db.commit()
-    return db.execute("SELECT * FROM awards WHERE week_start = ?", (key,)).fetchone()
+    row = db.execute("SELECT * FROM awards WHERE week_start = ?", (key,)).fetchone()
+    if row:
+        with _AWARD_LOCK:
+            _AWARD_CACHE[ck] = (None, row, None)
+    return row
 
 
 @app.template_filter("ct_time")
@@ -719,49 +809,54 @@ def notifications_page():
     return render_template("notifications.html", items=items, username=session.get("username"))
 
 
-@app.route("/")
-def index():
-    viewer = require_user()
-    if not viewer:
-        return redirect(url_for("login"))
-    db = get_db()
-    # Opening The Back Draft marks everything read.
-    db.execute("UPDATE users SET back_draft_seen_at = ? WHERE id = ?", (datetime.utcnow().isoformat(), viewer["id"]))
-    db.commit()
-    g._unread_bd = 0
-    base_sql = """
+FEED_PAGE = 20
+
+
+def _feed_cursor(item):
+    return "%s~%s~%d" % (item["created_at"] or "", item["kind"], item["id"])
+
+
+def _parse_feed_cursor(raw):
+    """'created_at~kind~id' -> tuple, or None. Order key is (created_at, kind, id) descending."""
+    try:
+        ts, kind, ident = (raw or "").rsplit("~", 2)
+        if kind not in ("post", "board"):
+            return None
+        return ts, kind, int(ident)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _older_than(col_ts, col_id, kind, cur):
+    """SQL + params selecting rows strictly after `cur` in (created_at, kind, id) DESC order."""
+    if not cur:
+        return "1=1", []
+    ts, ckind, cid = cur
+    # 'post' > 'board' as strings, so at equal timestamps posts come first.
+    if kind == ckind:
+        return f"(COALESCE({col_ts}, '') < ? OR (COALESCE({col_ts}, '') = ? AND {col_id} < ?))", [ts, ts, cid]
+    if kind < ckind:  # board rows at the same timestamp come after a post cursor
+        return f"COALESCE({col_ts}, '') <= ?", [ts]
+    return f"COALESCE({col_ts}, '') < ?", [ts]
+
+
+def _feed_page(db, viewer, viewer_admin, cur):
+    """Up to FEED_PAGE non-pinned posts + board toots older than `cur`; returns (items, next_cursor)."""
+    where, args = _older_than("posts.created_at", "posts.id", "post", cur)
+    rows = db.execute(
+        """
         SELECT posts.id, posts.user_id, posts.content, posts.created_at, posts.audio_path,
                posts.pinned_at, posts.self_reacted_at, COALESCE(users.username, 'unknown') AS username
         FROM posts
         LEFT JOIN users ON posts.user_id = users.id
-    """
-    # Pinned posts first (newest pin on top), then the normal feed without them.
-    pinned_rows = db.execute(
-        base_sql + " WHERE posts.pinned_at IS NOT NULL ORDER BY posts.pinned_at DESC, posts.id DESC"
+        WHERE posts.pinned_at IS NULL AND """ + where + """
+        ORDER BY COALESCE(posts.created_at, '') DESC, posts.id DESC
+        LIMIT ?
+        """,
+        args + [FEED_PAGE + 1],
     ).fetchall()
-    rows = db.execute(
-        base_sql + " WHERE posts.pinned_at IS NULL ORDER BY posts.created_at DESC LIMIT 50"
-    ).fetchall()
-    viewer_admin = is_admin_user(viewer)
-    posts = []
-    for row in list(pinned_rows) + list(rows):
-        posts.append({
-            "kind": "post",
-            "id": row["id"],
-            "user_id": row["user_id"],
-            "content": row["content"],
-            "created_at": row["created_at"],
-            "audio_path": row["audio_path"],
-            "username": row["username"],
-            "pinned": bool(row["pinned_at"]),
-            "self_reacted": bool(row["self_reacted_at"]),
-            "can_pin": can_pin_post(viewer, row["user_id"], viewer_admin),
-            "can_manage": can_manage_post(viewer, row["user_id"]),
-        })
-    rx = load_reactions(db, "post", [p["id"] for p in posts], viewer["id"])
-    for p in posts:
-        p["reactions"] = rx.get(p["id"], [])
-    # Cheese Board toots mix into the feed chronologically (pinned feed posts stay on top).
+    posts = [_post_item(r, viewer, viewer_admin) for r in rows]
+    bwhere, bargs = _older_than("b.created_at", "b.id", "board", cur)
     board_rows = db.execute(
         """
         SELECT b.id, b.board_user_id, b.author_id, b.body, b.audio_path, b.created_at, b.self_reacted_at,
@@ -769,9 +864,11 @@ def index():
         FROM board_posts b
         LEFT JOIN users a ON a.id = b.author_id
         LEFT JOIN users o ON o.id = b.board_user_id
-        ORDER BY b.created_at DESC, b.id DESC
-        LIMIT 50
-        """
+        WHERE """ + bwhere + """
+        ORDER BY COALESCE(b.created_at, '') DESC, b.id DESC
+        LIMIT ?
+        """,
+        bargs + [FEED_PAGE + 1],
     ).fetchall()
     boards = [{
         "kind": "board",
@@ -787,19 +884,87 @@ def index():
         "can_pin": False,
         "can_manage": can_delete_board_post(viewer, r),
     } for r in board_rows]
-    brx = load_reactions(db, "board", [b["id"] for b in boards], viewer["id"])
-    for b in boards:
-        b["reactions"] = brx.get(b["id"], [])
-    n_pinned = len(pinned_rows)
-    stream = sorted(posts[n_pinned:] + boards, key=lambda p: p["created_at"] or "", reverse=True)[:50]
-    posts = posts[:n_pinned] + stream
-    squeak = _cheek_squeak_context(db, viewer)
+    merged = sorted(posts + boards, key=lambda p: (p["created_at"] or "", p["kind"], p["id"]), reverse=True)
+    page = merged[:FEED_PAGE]
+    next_cursor = _feed_cursor(page[-1]) if len(merged) > FEED_PAGE else None
+    return page, next_cursor
+
+
+def _post_item(row, viewer, viewer_admin):
+    return {
+        "kind": "post",
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "content": row["content"],
+        "created_at": row["created_at"] or "",
+        "audio_path": row["audio_path"],
+        "username": row["username"],
+        "pinned": bool(row["pinned_at"]),
+        "self_reacted": bool(row["self_reacted_at"]),
+        "can_pin": can_pin_post(viewer, row["user_id"], viewer_admin),
+        "can_manage": can_manage_post(viewer, row["user_id"]),
+    }
+
+
+def _attach_reactions(db, items, viewer):
+    for kind in ("post", "board"):
+        ids = [p["id"] for p in items if p["kind"] == kind]
+        if not ids:
+            continue
+        rx = load_reactions(db, kind, ids, viewer["id"])
+        for p in items:
+            if p["kind"] == kind:
+                p["reactions"] = rx.get(p["id"], [])
+
+
+@app.route("/")
+def index():
+    viewer = require_user()
+    if not viewer:
+        if request.args.get("partial") and _wants_json():
+            return jsonify({"ok": False, "error": "login required"}), 401
+        return redirect(url_for("login"))
+    db = get_db()
+    viewer_admin = is_admin_user(viewer)
+    raw_cursor = request.args.get("before")
+    cur = _parse_feed_cursor(raw_cursor) if raw_cursor else None
+    first_page = cur is None
+    stream, next_cursor = _feed_page(db, viewer, viewer_admin, cur)
+    if request.args.get("partial") and _wants_json():
+        # "Load more": just the next batch of cards.
+        _attach_reactions(db, stream, viewer)
+        html = render_template("_feed_cards.html", posts=stream)
+        return jsonify({"ok": True, "html": html, "next": next_cursor})
+    pinned = []
+    if first_page:
+        # Opening The Back Draft marks everything read; only write when something is unread.
+        if unread_back_draft_count(viewer["id"]):
+            db.execute("UPDATE users SET back_draft_seen_at = ? WHERE id = ?",
+                       (datetime.utcnow().isoformat(), viewer["id"]))
+            db.commit()
+        g._unread_bd = 0
+        # Pinned posts first (newest pin on top), then the normal feed without them.
+        pinned_rows = db.execute(
+            """
+            SELECT posts.id, posts.user_id, posts.content, posts.created_at, posts.audio_path,
+                   posts.pinned_at, posts.self_reacted_at, COALESCE(users.username, 'unknown') AS username
+            FROM posts
+            LEFT JOIN users ON posts.user_id = users.id
+            WHERE posts.pinned_at IS NOT NULL ORDER BY posts.pinned_at DESC, posts.id DESC
+            """
+        ).fetchall()
+        pinned = [_post_item(r, viewer, viewer_admin) for r in pinned_rows]
+    posts = pinned + stream
+    _attach_reactions(db, posts, viewer)
+    squeak = _cheek_squeak_context(db, viewer) if first_page else None
     return render_template(
         "feed.html",
         squeak=squeak,
         posts=posts,
+        next_cursor=next_cursor,
+        first_page=first_page,
         username=session.get("username"),
-        is_admin=is_admin_user(viewer),
+        is_admin=viewer_admin,
         post_max=POST_MAX_CHARS,
     )
 
@@ -1681,6 +1846,53 @@ def admin_info(db, user_row, viewer):
     }
 
 
+# ---- Caching + health ----
+YEAR = 31536000
+IMMUTABLE_ENDPOINTS = {"serve_clip", "serve_avatar"}  # filenames are unique per upload, never reused
+_STATIC_VERSIONS = {}
+
+
+def static_v(filename):
+    """url_for('static') with a content-hash ?v= so the file can be cached for a year."""
+    v = _STATIC_VERSIONS.get(filename)
+    if v is None:
+        try:
+            with open(os.path.join(app.static_folder, filename), "rb") as f:
+                v = hashlib.sha1(f.read()).hexdigest()[:10]
+        except OSError:
+            v = "0"
+        _STATIC_VERSIONS[filename] = v
+    return url_for("static", filename=filename, v=v)
+
+
+app.jinja_env.globals["static_v"] = static_v
+
+
+@app.after_request
+def _cache_headers(resp):
+    ep = request.endpoint or ""
+    if resp.status_code in (200, 206, 304):
+        if ep in IMMUTABLE_ENDPOINTS:
+            # Login-gated media: browser may keep it a year, shared caches may not.
+            resp.headers["Cache-Control"] = f"private, max-age={YEAR}, immutable"
+        elif ep == "static":
+            if request.args.get("v"):
+                resp.headers["Cache-Control"] = f"public, max-age={YEAR}, immutable"
+            else:
+                resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+@app.route("/healthz")
+def healthz():
+    """Render health check: process is up and the DB answers. No session, no templates."""
+    try:
+        get_db().execute("SELECT 1").fetchone()
+    except sqlite3.Error:
+        return ("db error", 503, {"Cache-Control": "no-store", "Content-Type": "text/plain"})
+    return ("ok", 200, {"Cache-Control": "no-store", "Content-Type": "text/plain"})
+
+
 # ---- PWA: manifest, service worker (root scope), offline fallback ----
 THEME_COLOR = "#c47a12"
 BG_COLOR = "#fff8e7"
@@ -1706,8 +1918,9 @@ def pwa_manifest():
         ],
     }
     resp = app.response_class(json.dumps(data, ensure_ascii=False), mimetype="application/manifest+json")
-    resp.headers["Cache-Control"] = "public, max-age=3600"
-    return resp
+    resp.headers["Cache-Control"] = "no-cache"  # always revalidate (cheap 304 via ETag)
+    resp.add_etag()
+    return resp.make_conditional(request)
 
 
 @app.route("/sw.js")

@@ -23,7 +23,7 @@
                 </div>
             </div>
         </div>
-        <canvas id="crop-canvas" width="512" height="512" hidden></canvas>
+        <canvas id="crop-canvas" width="256" height="256" hidden></canvas>
 
         <h2 class="section-title">Top 3 farts</h2>
         <p class="muted">Choose up to three of your own posts. Order matters: 1st is the crown.</p>
@@ -55,7 +55,7 @@
 <script>
 (function () {
   var STAGE = 240;
-  var OUT = 512;
+  var OUT = 256;  // saved avatar size (px); shown at most 152 CSS px
   var fileInput = document.getElementById("avatar");
   var form = document.getElementById("profile-form");
   var stage = document.getElementById("crop-stage");
@@ -226,9 +226,9 @@
     if (canvas.toBlob) {
       canvas.toBlob(function (blob) {
         cb(blob || null);
-      }, "image/jpeg", 0.92);
+      }, "image/jpeg", 0.85);
     } else {
-      var data = canvas.toDataURL("image/jpeg", 0.92);
+      var data = canvas.toDataURL("image/jpeg", 0.85);
       var bin = atob(data.split(",")[1]);
       var arr = new Uint8Array(bin.length);
       for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
