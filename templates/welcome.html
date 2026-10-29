@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{#
+  ============================================================
+  WELCOME PAGE COPY — edit the text in the blocks below.
+  Everyone lands here right after signing in (/welcome).
+  Each section is its own block; replace the placeholder
+  <p class="placeholder"> lines with real copy (plain HTML).
+  Delete a "placeholder" class once a section is written.
+  ============================================================
+#}
+
+{% block title %}Welcome - Cup O' Cheese{% endblock %}
+
+{# ---- Page heading + one-line greeting ---- #}
+{% block welcome_heading %}🧀 Welcome to Cup O' Cheese{% endblock %}
+{% block welcome_intro %}
+<p class="placeholder">[Coming soon — Jason will fill this in: a short hello / intro line.]</p>
+{% endblock %}
+
+{# ---- Section 1: what this place is for ---- #}
+{% block section_purpose %}
+<h2>💨 What this place is for</h2>
+<p class="placeholder">[Coming soon — Jason will fill this in.]</p>
+{% endblock %}
+
+{# ---- Section 2: house rules ---- #}
+{% block section_rules %}
+<h2>🤝 How we keep it fun and friendly</h2>
+<p class="placeholder">[Coming soon — Jason will fill this in: the house rules.]</p>
+{% endblock %}
+
+{# ---- Section 3: how the site works (factual starter notes; reword freely) ---- #}
+{% block section_how %}
+<h2>🎺 How it works</h2>
+<p class="placeholder">[Coming soon — Jason will fill this in. Starter notes below.]</p>
+<ul>
+    <li><strong>No toot, no post:</strong> every post on The Back Draft needs an audio clip.</li>
+    <li><strong>Keep it short:</strong> {{ post_max }} characters max — let the fart do the talking.</li>
+    <li><strong>Cheese Boards:</strong> every member's profile has a board where others can leave a toot.</li>
+    <li><strong>Reactions:</strong> tap <strong>+</strong> under a post to react with 😷 ☠️ 🦨 🎺 🚀 😂 👏 🏆 🫡 🤌 🐐.</li>
+</ul>
+{% endblock %}
+
+{# ---- Button at the bottom ---- #}
+{% block welcome_cta_label %}💨 Take me to The Back Draft{% endblock %}
+
+{# ============ Layout (no need to edit below) ============ #}
+{% block content %}
+<div class="card welcome-hero">
+    <h1>{{ self.welcome_heading() }}</h1>
+    {{ self.welcome_intro() }}
+</div>
+<div class="card welcome-section" id="welcome-purpose">{{ self.section_purpose() }}</div>
+<div class="card welcome-section" id="welcome-rules">{{ self.section_rules() }}</div>
+<div class="card welcome-section" id="welcome-how">{{ self.section_how() }}</div>
+<a class="welcome-cta" href="{{ url_for('index') }}">{{ self.welcome_cta_label() }}</a>
+{% endblock %}

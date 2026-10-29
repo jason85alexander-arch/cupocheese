@@ -137,6 +137,14 @@
         .pin-label { display: inline-block; font-size: 12px; font-weight: 700; color: #8a5208; background: #fde7b8; border-radius: 999px; padding: 2px 9px; margin-bottom: 8px; }
         .pin-label.pin-inline { margin-bottom: 0; }
         .pin-form { margin: 0; }
+        .welcome-hero h1 { margin: 0 0 6px; font-size: 26px; }
+        .welcome-section h2 { font-size: 18px; margin: 0 0 8px; }
+        .welcome-section ul { margin: 0; padding-left: 20px; }
+        .welcome-section li { margin: 4px 0; }
+        .placeholder { color: #8a7a62; font-style: italic; background: #fff3d6; border: 1px dashed #e0a030; border-radius: 6px; padding: 8px 10px; }
+        .welcome-cta { display: block; text-align: center; background: #c47a12; color: #fff !important; font-size: 19px; font-weight: 700;
+                       padding: 16px 20px; border-radius: 10px; text-decoration: none; margin: 8px 0 24px; min-height: 24px; }
+        .welcome-cta:hover { background: #a9680f; }
         .post-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
         .post-card-head .post-meta { flex: 1; margin-bottom: 0; }
         .post-menu { position: relative; flex: 0 0 auto; }
@@ -269,6 +277,7 @@
         </div>
         <nav class="sidebar-nav">
             {% if session.user_id %}
+                <a href="{{ url_for('welcome') }}" class="{% if ep == 'welcome' %}nav-active{% endif %}"{% if ep == 'welcome' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👋</span><span class="nav-label">Welcome</span><span class="nav-short" aria-hidden="true">Welcome</span></a>
                 <a href="{{ url_for('index') }}" class="{% if ep == 'index' %}nav-active{% endif %}"{% if ep == 'index' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">💨</span><span class="nav-label">The Back Draft</span><span class="nav-short" aria-hidden="true">Back Draft</span></a>
                 <a href="{{ url_for('people') }}" class="{% if ep == 'people' %}nav-active{% endif %}"{% if ep == 'people' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👥</span><span class="nav-label">People</span><span class="nav-short" aria-hidden="true">People</span></a>
                 <a href="{{ url_for('me') }}" class="{% if on_own_profile %}nav-active{% endif %}"{% if on_own_profile %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🧀</span><span class="nav-label">{{ session.username }}{{ admin_badge(session.username) }}</span><span class="nav-short" aria-hidden="true">Me</span></a>

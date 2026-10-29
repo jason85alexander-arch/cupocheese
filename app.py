@@ -376,8 +376,12 @@ def register():
                 (username, email, generate_password_hash(password), datetime.utcnow().isoformat(), 1)
             )
             db.commit()
+            new_user = db.execute("SELECT id, username FROM users WHERE username = ?", (username,)).fetchone()
+            session.clear()
+            session["user_id"] = new_user["id"]
+            session["username"] = new_user["username"]
             flash("Account Created! Hike a leg and come on in!")
-            return redirect(url_for("login"))
+            return redirect(url_for("welcome"))
         except sqlite3.IntegrityError as e:
             if "email" in str(e).lower():
                 flash("Email already registered")
@@ -395,9 +399,18 @@ def login():
         if user and check_password_hash(user["password_hash"], password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
-            return redirect(url_for("index"))
+            return redirect(url_for("welcome"))
         flash("Invalid username or password")
     return render_template("login.html")
+
+@app.route("/welcome")
+def welcome():
+    """Landing page after sign-in. Copy lives in templates/welcome.html."""
+    viewer = require_user()
+    if not viewer:
+        return redirect(url_for("login"))
+    return render_template("welcome.html", username=session.get("username"), post_max=POST_MAX_CHARS)
+
 
 @app.route("/logout")
 def logout():
