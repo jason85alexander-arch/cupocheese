@@ -133,6 +133,10 @@
         }
         .delete-btn:hover { background: #fff0f0; color: #822; }
 
+        .card.post-pinned { border: 2px solid #e0a030; background: #fffaf0; box-shadow: 0 2px 6px rgba(196,122,18,.18); }
+        .pin-label { display: inline-block; font-size: 12px; font-weight: 700; color: #8a5208; background: #fde7b8; border-radius: 999px; padding: 2px 9px; margin-bottom: 8px; }
+        .pin-label.pin-inline { margin-bottom: 0; }
+        .pin-form { margin: 0; }
         .post-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
         .post-card-head .post-meta { flex: 1; margin-bottom: 0; }
         .post-menu { position: relative; flex: 0 0 auto; }
@@ -157,7 +161,7 @@
             font-size: 14px; font-weight: 600; color: #2b2118; text-decoration: none;
             cursor: pointer; border-radius: 0;
         }
-        .post-menu-panel a:hover { background: #fff8e7; color: #c47a12; }
+        .post-menu-panel a:hover, .post-menu-panel .pin-btn:hover { background: #fff8e7; color: #c47a12; }
         .post-menu-panel .menu-danger { color: #a33; }
         .post-menu-panel .menu-danger:hover { background: #fff0f0; color: #822; }
 

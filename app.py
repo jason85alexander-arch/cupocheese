@@ -1,6 +1,6 @@
 import os
 import secrets
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory, g, jsonify, get_template_attribute
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory, g, jsonify, get_template_attribute, abort
 from markupsafe import Markup
 import json
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -142,6 +142,8 @@ def init_db():
         post_cols = {row["name"] for row in db.execute("PRAGMA table_info(posts)").fetchall()}
         if "audio_path" not in post_cols:
             db.execute("ALTER TABLE posts ADD COLUMN audio_path TEXT")
+        if "pinned_at" not in post_cols:
+            db.execute("ALTER TABLE posts ADD COLUMN pinned_at TEXT")
         # Profile fields (avatar + self-selected top 3 posts)
         cols = {row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()}
         for col, typ in (
@@ -300,16 +302,22 @@ def index():
     if not viewer:
         return redirect(url_for("login"))
     db = get_db()
-    rows = db.execute("""
+    base_sql = """
         SELECT posts.id, posts.user_id, posts.content, posts.created_at, posts.audio_path,
-               COALESCE(users.username, 'unknown') AS username
+               posts.pinned_at, COALESCE(users.username, 'unknown') AS username
         FROM posts
         LEFT JOIN users ON posts.user_id = users.id
-        ORDER BY posts.created_at DESC
-        LIMIT 50
-    """).fetchall()
+    """
+    # Pinned posts first (newest pin on top), then the normal feed without them.
+    pinned_rows = db.execute(
+        base_sql + " WHERE posts.pinned_at IS NOT NULL ORDER BY posts.pinned_at DESC, posts.id DESC"
+    ).fetchall()
+    rows = db.execute(
+        base_sql + " WHERE posts.pinned_at IS NULL ORDER BY posts.created_at DESC LIMIT 50"
+    ).fetchall()
+    viewer_admin = is_admin_user(viewer)
     posts = []
-    for row in rows:
+    for row in list(pinned_rows) + list(rows):
         posts.append({
             "id": row["id"],
             "user_id": row["user_id"],
@@ -317,6 +325,8 @@ def index():
             "created_at": row["created_at"],
             "audio_path": row["audio_path"],
             "username": row["username"],
+            "pinned": bool(row["pinned_at"]),
+            "can_pin": can_pin_post(viewer, row["user_id"], viewer_admin),
             "can_manage": can_manage_post(viewer, row["user_id"]),
         })
     rx = load_reactions(db, "post", [p["id"] for p in posts], viewer["id"])
@@ -446,6 +456,38 @@ def create_post():
     )
     db.commit()
     return redirect(url_for("index"))
+
+
+def can_pin_post(viewer, owner_id, viewer_admin=None):
+    """Only admins, and only their own posts."""
+    if not viewer or owner_id is None:
+        return False
+    if viewer_admin is None:
+        viewer_admin = is_admin_user(viewer)
+    return bool(viewer_admin) and int(viewer["id"]) == int(owner_id)
+
+
+@app.route("/post/<int:post_id>/pin", methods=["POST"])
+def pin_post(post_id):
+    viewer = require_user()
+    if not viewer:
+        return redirect(url_for("login"))
+    db = get_db()
+    post = db.execute("SELECT id, user_id, pinned_at FROM posts WHERE id = ?", (post_id,)).fetchone()
+    if not post:
+        abort(404)
+    if not can_pin_post(viewer, post["user_id"]):
+        abort(403)
+    action = request.form.get("action", "toggle")
+    pin = (post["pinned_at"] is None) if action == "toggle" else (action == "pin")
+    db.execute(
+        "UPDATE posts SET pinned_at = ? WHERE id = ?",
+        (datetime.utcnow().isoformat() if pin else None, post_id),
+    )
+    db.commit()
+    flash("📌 Pinned to the top of The Back Draft." if pin else "Unpinned.")
+    back = request.referrer or url_for("index")
+    return redirect(back.split("#")[0] + "#post-%d" % post_id)
 
 
 @app.route("/post/<int:post_id>/delete", methods=["POST"])
@@ -583,7 +625,7 @@ def _load_top_posts(db, user_row):
         if not pid:
             continue
         post = db.execute(
-            "SELECT id, content, created_at, audio_path FROM posts WHERE id = ? AND user_id = ?",
+            "SELECT id, content, created_at, audio_path, pinned_at FROM posts WHERE id = ? AND user_id = ?",
             (pid, user_row["id"]),
         ).fetchone()
         if post:
@@ -620,6 +662,8 @@ def user_profile(username):
             "created_at": post["created_at"],
             "audio_path": post["audio_path"],
             "can_manage": is_owner or viewer_admin,
+            "pinned": bool(post["pinned_at"]),
+            "can_pin": can_pin_post(viewer, profile["id"], viewer_admin),
         })
     board = _load_board(db, profile["id"], viewer)
     top_rx = load_reactions(db, "post", [t["id"] for t in tops], viewer["id"])
