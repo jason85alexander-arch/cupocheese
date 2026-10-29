@@ -1,6 +1,6 @@
 import os
 import secrets
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory, g
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_from_directory, g, jsonify, get_template_attribute
 from markupsafe import Markup
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -178,7 +178,120 @@ def init_db():
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_board_posts_board ON board_posts (board_user_id, created_at)"
         )
+        # Emoji reactions (no comments) on feed posts and Cheese Board posts.
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS reactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_type TEXT NOT NULL,
+                target_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                emoji TEXT NOT NULL,
+                created_at TEXT,
+                UNIQUE (target_type, target_id, user_id, emoji),
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reactions_target ON reactions (target_type, target_id)"
+        )
         db.commit()  # schema ready
+
+REACTION_EMOJIS = ["😷", "☠️", "🦨", "🎺", "🚀", "😂", "👏", "🏆", "🫡", "🤌", "🐐"]
+REACTION_TARGETS = {"post": "posts", "board": "board_posts"}
+
+
+def _norm_emoji(e):
+    return (e or "").replace("\ufe0f", "").strip()
+
+
+_REACTION_LOOKUP = {_norm_emoji(e): e for e in REACTION_EMOJIS}
+
+
+def load_reactions(db, kind, ids, viewer_id):
+    """Batch-load reactions for many targets. Returns {target_id: [ {emoji,count,mine,who}, ...11 ]}."""
+    ids = [int(i) for i in ids if i is not None]
+    raw = {i: {} for i in ids}
+    if ids:
+        marks = ",".join("?" * len(ids))
+        rows = db.execute(
+            f"""
+            SELECT r.target_id, r.emoji, COUNT(*) AS n,
+                   MAX(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) AS mine,
+                   GROUP_CONCAT(COALESCE(u.username, '?'), ', ') AS who
+            FROM reactions r LEFT JOIN users u ON u.id = r.user_id
+            WHERE r.target_type = ? AND r.target_id IN ({marks})
+            GROUP BY r.target_id, r.emoji
+            """,
+            [viewer_id, kind] + ids,
+        ).fetchall()
+        for r in rows:
+            raw.setdefault(r["target_id"], {})[r["emoji"]] = r
+    out = {}
+    for tid, by_emoji in raw.items():
+        lst = []
+        for e in REACTION_EMOJIS:
+            r = by_emoji.get(e)
+            lst.append({
+                "emoji": e,
+                "count": r["n"] if r else 0,
+                "mine": bool(r["mine"]) if r else False,
+                "who": r["who"] if r else "",
+            })
+        out[tid] = lst
+    return out
+
+
+def delete_reactions(db, kind, target_id):
+    db.execute("DELETE FROM reactions WHERE target_type = ? AND target_id = ?", (kind, target_id))
+
+
+def _wants_json():
+    return request.headers.get("X-Requested-With") == "fetch" or \
+        "application/json" in (request.headers.get("Accept") or "")
+
+
+@app.route("/react/<kind>/<int:target_id>", methods=["POST"])
+def toggle_reaction(kind, target_id):
+    viewer = require_user()
+    if not viewer:
+        if _wants_json():
+            return jsonify({"ok": False, "error": "login required"}), 401
+        return redirect(url_for("login"))
+    table = REACTION_TARGETS.get(kind)
+    if not table:
+        return (jsonify({"ok": False, "error": "bad target"}), 404) if _wants_json() else redirect(url_for("index"))
+    emoji = _REACTION_LOOKUP.get(_norm_emoji(request.form.get("emoji")))
+    back = request.referrer or url_for("index")
+    if not emoji:
+        if _wants_json():
+            return jsonify({"ok": False, "error": "emoji not allowed"}), 400
+        flash("That reaction isn't on the menu.")
+        return redirect(back)
+    db = get_db()
+    if not db.execute(f"SELECT 1 FROM {table} WHERE id = ?", (target_id,)).fetchone():
+        if _wants_json():
+            return jsonify({"ok": False, "error": "not found"}), 404
+        flash("That post is gone.")
+        return redirect(back)
+    cur = db.execute(
+        "DELETE FROM reactions WHERE target_type = ? AND target_id = ? AND user_id = ? AND emoji = ?",
+        (kind, target_id, viewer["id"], emoji),
+    )
+    on = False
+    if cur.rowcount == 0:
+        db.execute(
+            "INSERT OR IGNORE INTO reactions (target_type, target_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)",
+            (kind, target_id, viewer["id"], emoji, datetime.utcnow().isoformat()),
+        )
+        on = True
+    db.commit()
+    if _wants_json():
+        rx = load_reactions(db, kind, [target_id], viewer["id"])[target_id]
+        bar = get_template_attribute("_reactions.html", "reaction_bar")
+        return jsonify({"ok": True, "on": on, "html": str(bar(kind, target_id, rx))})
+    anchor = ("#post-%d" if kind == "post" else "#bp-%d") % target_id
+    return redirect(back.split("#")[0] + anchor)
+
 
 @app.route("/")
 def index():
@@ -205,6 +318,9 @@ def index():
             "username": row["username"],
             "can_manage": can_manage_post(viewer, row["user_id"]),
         })
+    rx = load_reactions(db, "post", [p["id"] for p in posts], viewer["id"])
+    for p in posts:
+        p["reactions"] = rx.get(p["id"], [])
     return render_template(
         "feed.html",
         posts=posts,
@@ -363,6 +479,7 @@ def delete_post(post_id):
         (post_id,),
     )
     db.execute("DELETE FROM posts WHERE id = ?", (post_id,))
+    delete_reactions(db, "post", post_id)
     db.commit()
     if audio:
         path = os.path.join(UPLOAD_FOLDER, audio)
@@ -503,11 +620,18 @@ def user_profile(username):
             "audio_path": post["audio_path"],
             "can_manage": is_owner or viewer_admin,
         })
+    board = _load_board(db, profile["id"], viewer)
+    top_rx = load_reactions(db, "post", [t["id"] for t in tops], viewer["id"])
+    for t in tops:
+        t["reactions"] = top_rx.get(t["id"], [])
+    board_rx = load_reactions(db, "board", [b["id"] for b in board], viewer["id"])
+    for b in board:
+        b["reactions"] = board_rx.get(b["id"], [])
     return render_template(
         "profile.html",
         profile=profile,
         tops=tops,
-        board=_load_board(db, profile["id"], viewer),
+        board=board,
         board_max=BOARD_MAX_CHARS,
         is_owner=is_owner,
         username=session.get("username"),
@@ -648,6 +772,7 @@ def delete_board_post(post_id):
         flash("Only the author, the board owner, or an admin can remove that.")
         return redirect(back)
     db.execute("DELETE FROM board_posts WHERE id = ?", (post_id,))
+    delete_reactions(db, "board", post_id)
     db.commit()
     if bp["audio_path"]:
         path = os.path.join(UPLOAD_FOLDER, bp["audio_path"])

@@ -71,6 +71,19 @@
         .char-count.over { color: #b5462a; font-weight: 600; }
         .compose-bar .post-btn:disabled { opacity: .45; cursor: not-allowed; }
         .admin-badge { margin-left: 2px; }
+        .reaction-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; position: relative; }
+        .reaction-bar button, .reaction-bar summary { width: auto; margin: 0; font: inherit; cursor: pointer; }
+        .rx-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; border: 1px solid #e3d6bd; background: #fffaf0; color: #4a3b28; font-size: 14px; line-height: 1.4; }
+        .rx-chip .rx-n { font-size: 12px; font-weight: 600; }
+        .rx-chip.rx-mine, .rx-opt.rx-mine { background: #ffe9a8; border-color: #e0b44a; }
+        .rx-picker { position: relative; }
+        .rx-picker summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 28px; border-radius: 999px; border: 1px dashed #cbb98f; color: #7a6a55; font-weight: 700; user-select: none; }
+        .rx-picker summary::-webkit-details-marker { display: none; }
+        .rx-picker[open] { flex-basis: 100%; }
+        .rx-panel { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; padding: 6px; max-width: 100%; box-sizing: border-box; background: #fff; border: 1px solid #e3d6bd; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.08); }
+        .rx-opt { width: 36px !important; height: 36px; padding: 0; font-size: 20px; border-radius: 8px; border: 1px solid transparent; background: transparent; }
+        .rx-opt:hover { background: #fff3d6; }
+        .reaction-bar.rx-busy { opacity: .6; pointer-events: none; }
         .compose-bar .rec-status { flex: 1; font-size: 13px; color: #7a6a55; }
         .rec-preview, .post-audio { width: 100%; margin-top: 8px; margin-bottom: 0; }
 
@@ -264,6 +277,37 @@
         if (b) b.setAttribute("aria-expanded", "false");
       });
     }
+  });
+})();
+</script>
+<script>
+(function () {
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form.classList || !form.classList.contains("reaction-bar")) return;
+    var btn = e.submitter;
+    if (!btn || !btn.value || !window.fetch) return; /* fall back to normal POST */
+    e.preventDefault();
+    var fd = new FormData();
+    fd.append("emoji", btn.value);
+    form.classList.add("rx-busy");
+    fetch(form.action, { method: "POST", body: fd, credentials: "same-origin",
+                         headers: { "X-Requested-With": "fetch", "Accept": "application/json" } })
+      .then(function (r) { if (r.status === 401) { window.location.href = "/login"; throw 0; } return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) throw 0;
+        var tmp = document.createElement("div");
+        tmp.innerHTML = d.html;
+        var fresh = tmp.firstElementChild;
+        if (fresh) form.replaceWith(fresh); else form.classList.remove("rx-busy");
+      })
+      .catch(function () { form.classList.remove("rx-busy"); });
+  });
+  /* close open pickers when clicking elsewhere */
+  document.addEventListener("click", function (e) {
+    document.querySelectorAll(".rx-picker[open]").forEach(function (d) {
+      if (!d.contains(e.target)) d.removeAttribute("open");
+    });
   });
 })();
 </script>

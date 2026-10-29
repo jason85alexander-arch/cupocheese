@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}The Back Draft - Cup O' Cheese{% endblock %}
 {% block content %}
+{% from "_reactions.html" import reaction_bar %}
 <h1 class="profile-name feed-heading">💨 The Back Draft</h1>
 <div class="card">
     <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data" id="compose-form" data-require-audio="{{ '0' if is_admin else '1' }}" data-max="{{ post_max }}">
@@ -17,7 +18,7 @@
 </div>
 
 {% for post in posts %}
-<div class="card">
+<div class="card" id="post-{{ post.id }}">
     <div class="post-card-head">
         <div class="post-meta">
             {% if post.username and post.username != 'unknown' %}
@@ -46,6 +47,7 @@
     {% if post.audio_path %}
     <audio class="post-audio" controls preload="none" src="{{ url_for('serve_clip', filename=post.audio_path) }}"></audio>
     {% endif %}
+    {{ reaction_bar('post', post.id, post.reactions) }}
 </div>
 {% else %}
 <div class="card">

@@ -1,0 +1,15 @@
+{% macro reaction_bar(kind, target_id, reactions) -%}
+<form class="reaction-bar" method="post" action="{{ url_for('toggle_reaction', kind=kind, target_id=target_id) }}" data-kind="{{ kind }}" data-id="{{ target_id }}">
+  {%- for r in reactions if r.count %}
+  <button type="submit" name="emoji" value="{{ r.emoji }}" class="rx-chip{% if r.mine %} rx-mine{% endif %}" title="{{ r.who }}" aria-pressed="{{ 'true' if r.mine else 'false' }}"><span class="rx-e">{{ r.emoji }}</span><span class="rx-n">{{ r.count }}</span></button>
+  {%- endfor %}
+  <details class="rx-picker">
+    <summary class="rx-add" aria-label="Add reaction" title="React">+</summary>
+    <div class="rx-panel">
+      {%- for r in reactions %}
+      <button type="submit" name="emoji" value="{{ r.emoji }}" class="rx-opt{% if r.mine %} rx-mine{% endif %}" aria-pressed="{{ 'true' if r.mine else 'false' }}">{{ r.emoji }}</button>
+      {%- endfor %}
+    </div>
+  </details>
+</form>
+{%- endmacro %}
