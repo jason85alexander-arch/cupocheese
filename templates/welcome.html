@@ -42,6 +42,25 @@
 </ul>
 {% endblock %}
 
+{# ---- Section 4: add the app to your home screen ---- #}
+{% block section_install %}
+<h2>📲 Put the COC on your home screen</h2>
+<p>Get the 🧀 icon on your phone so the COC opens like a real app, full screen with no browser bars.</p>
+<p><strong>iPhone / iPad (Safari):</strong></p>
+<ol>
+    <li>Open <strong>cupocheese.com</strong> in Safari.</li>
+    <li>Tap the <strong>Share</strong> button (the square with the arrow pointing up).</li>
+    <li>Scroll down and tap <strong>Add to Home Screen</strong>, then tap <strong>Add</strong>.</li>
+</ol>
+<p><strong>Android (Chrome):</strong></p>
+<ol>
+    <li>Open <strong>cupocheese.com</strong> in Chrome.</li>
+    <li>Tap <strong>Install app</strong> if it pops up, or tap the <strong>⋮</strong> menu in the top right.</li>
+    <li>Choose <strong>Install app</strong> (or <strong>Add to Home screen</strong>), then confirm.</li>
+</ol>
+<p>Don't see the option? Refresh the page and try again. Your microphone works in the app the same as in the browser.</p>
+{% endblock %}
+
 {# ---- Button at the bottom ---- #}
 {% block welcome_cta_label %}💨 Take me to The Back Draft{% endblock %}
 
@@ -54,5 +73,6 @@
 <div class="card welcome-section" id="welcome-purpose">{{ self.section_purpose() }}</div>
 <div class="card welcome-section" id="welcome-rules">{{ self.section_rules() }}</div>
 <div class="card welcome-section" id="welcome-how">{{ self.section_how() }}</div>
+<div class="card welcome-section" id="welcome-install">{{ self.section_install() }}</div>
 <a class="welcome-cta" href="{{ url_for('index') }}">{{ self.welcome_cta_label() }}</a>
 {% endblock %}
