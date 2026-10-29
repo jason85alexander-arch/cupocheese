@@ -194,6 +194,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         """)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_posts_created ON posts (created_at)")
         post_cols = {row["name"] for row in db.execute("PRAGMA table_info(posts)").fetchall()}
         if "audio_path" not in post_cols:
             db.execute("ALTER TABLE posts ADD COLUMN audio_path TEXT")
@@ -210,9 +211,15 @@ def init_db():
             ("top3_post_id", "INTEGER"),
             ("is_admin", "INTEGER DEFAULT 0"),
             ("member_no", "INTEGER"),
+            ("back_draft_seen_at", "TEXT"),
         ):
             if col not in cols:
                 db.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
+        # Unread Back Draft badge: start everyone at "now" so nobody sees a backlog.
+        db.execute(
+            "UPDATE users SET back_draft_seen_at = ? WHERE back_draft_seen_at IS NULL",
+            (datetime.utcnow().isoformat(),),
+        )
         # Join-order member numbers (#1 = first account). Assigned once, never renumbered.
         for r in db.execute("SELECT id FROM users WHERE member_no IS NULL ORDER BY id").fetchall():
             nxt = db.execute("SELECT COALESCE(MAX(member_no), 0) + 1 FROM users").fetchone()[0]
@@ -408,9 +415,32 @@ def unread_notification_count(user_id):
     return n
 
 
+def unread_back_draft_count(user_id):
+    """New Back Draft posts by others since the viewer last opened the feed (one indexed COUNT)."""
+    if not user_id:
+        return 0
+    if "_unread_bd" in g:
+        return g._unread_bd
+    try:
+        n = get_db().execute(
+            """SELECT COUNT(*) FROM posts
+               WHERE created_at > (SELECT COALESCE(back_draft_seen_at, created_at, '') FROM users WHERE id = ?)
+                 AND user_id != ?""",
+            (user_id, user_id),
+        ).fetchone()[0]
+    except sqlite3.Error:
+        n = 0
+    g._unread_bd = n
+    return n
+
+
 @app.context_processor
 def _inject_notifications():
-    return {"unread_notifications": unread_notification_count(session.get("user_id"))}
+    uid = session.get("user_id")
+    return {
+        "unread_notifications": unread_notification_count(uid),
+        "unread_back_draft": unread_back_draft_count(uid),
+    }
 
 
 # ---------------- Cheek Squeak O' the Week ----------------
@@ -664,6 +694,10 @@ def index():
     if not viewer:
         return redirect(url_for("login"))
     db = get_db()
+    # Opening The Back Draft marks everything read.
+    db.execute("UPDATE users SET back_draft_seen_at = ? WHERE id = ?", (datetime.utcnow().isoformat(), viewer["id"]))
+    db.commit()
+    g._unread_bd = 0
     base_sql = """
         SELECT posts.id, posts.user_id, posts.content, posts.created_at, posts.audio_path,
                posts.pinned_at, posts.self_reacted_at, COALESCE(users.username, 'unknown') AS username
@@ -782,9 +816,9 @@ def register():
         now = datetime.utcnow().isoformat()
         try:
             cur = db.execute(
-                "INSERT INTO users (username, email, password_hash, created_at, is_admin, member_no) "
-                "VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(member_no), 0) + 1 FROM users))",
-                (username, email, generate_password_hash(password), now, 1 if bootstrap else 0)
+                "INSERT INTO users (username, email, password_hash, created_at, is_admin, member_no, back_draft_seen_at) "
+                "VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(member_no), 0) + 1 FROM users), ?)",
+                (username, email, generate_password_hash(password), now, 1 if bootstrap else 0, now)
             )
             new_id = cur.lastrowid
             if inv is not None:
