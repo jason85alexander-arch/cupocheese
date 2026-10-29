@@ -1,13 +1,14 @@
 {% extends "base.html" %}
 {% block title %}The Back Draft - Cup O' Cheese{% endblock %}
 {% block content %}
-{% from "_reactions.html" import reaction_bar %}
+{% from "_reactions.html" import reaction_bar, geek_badge %}
 <h1 class="profile-name feed-heading">💨 The Back Draft</h1>
 {% if squeak %}
-<div class="card squeak-card" id="cheek-squeak">
+<div class="card squeak-card{% if squeak.winner and squeak.winner.self_reacted_at %} self-reacted{% endif %}" id="cheek-squeak"{% if squeak.winner %} data-geek="post:{{ squeak.winner.id }}"{% endif %}>
     <div class="squeak-title">🏆 Cheek Squeak O' the Week <span class="squeak-week">{{ squeak.label }}</span></div>
     {% if squeak.winner %}
     {% set w = squeak.winner %}
+    {{ geek_badge(w.self_reacted_at) }}
     <div class="post-meta squeak-meta">
         {% if w.username != 'unknown' %}<strong><a href="{{ url_for('user_profile', username=w.username) }}">{{ w.username }}</a>{{ admin_badge(w.username) }}</strong>{% else %}<strong>{{ w.username }}</strong>{% endif %}
         · {{ w.reaction_count }} reaction{{ '' if w.reaction_count == 1 else 's' }}
@@ -39,8 +40,9 @@
 </div>
 
 {% for post in posts %}
-<div class="card{% if post.pinned %} post-pinned{% endif %}" id="post-{{ post.id }}">
+<div class="card{% if post.pinned %} post-pinned{% endif %}{% if post.self_reacted %} self-reacted{% endif %}" id="post-{{ post.id }}" data-geek="post:{{ post.id }}">
     {% if post.pinned %}<div class="pin-label">📌 Pinned</div>{% endif %}
+    {{ geek_badge(post.self_reacted) }}
     <div class="post-card-head">
         <div class="post-meta">
             {% if post.username and post.username != 'unknown' %}

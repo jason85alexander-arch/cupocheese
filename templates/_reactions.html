@@ -13,3 +13,7 @@
   </details>
 </form>
 {%- endmacro %}
+
+{% macro geek_badge(marked) -%}
+{% if marked %}<div class="geek-badge"><span aria-hidden="true">🤓</span> I liked my own squeak, I must be a geek!</div>{% endif %}
+{%- endmacro %}

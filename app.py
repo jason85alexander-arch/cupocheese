@@ -145,6 +145,8 @@ def init_db():
             db.execute("ALTER TABLE posts ADD COLUMN audio_path TEXT")
         if "pinned_at" not in post_cols:
             db.execute("ALTER TABLE posts ADD COLUMN pinned_at TEXT")
+        if "self_reacted_at" not in post_cols:
+            db.execute("ALTER TABLE posts ADD COLUMN self_reacted_at TEXT")
         # Profile fields (avatar + self-selected top 3 posts)
         cols = {row["name"] for row in db.execute("PRAGMA table_info(users)").fetchall()}
         for col, typ in (
@@ -182,6 +184,10 @@ def init_db():
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_board_posts_board ON board_posts (board_user_id, created_at)"
         )
+        bp_cols = {row["name"] for row in db.execute("PRAGMA table_info(board_posts)").fetchall()}
+        if "self_reacted_at" not in bp_cols:
+            # Permanent "geek" mark: set on the author's first reaction to their own post, never cleared.
+            db.execute("ALTER TABLE board_posts ADD COLUMN self_reacted_at TEXT")
         # Emoji reactions (no comments) on feed posts and Cheese Board posts.
         db.execute("""
             CREATE TABLE IF NOT EXISTS reactions (
@@ -359,12 +365,13 @@ def week_bounds(now_utc=None, weeks_back=0):
 
 
 def top_post_between(db, start_utc, end_utc):
-    """Feed post created in [start, end) with most reactions; ties -> most distinct reactors, then earliest."""
+    """Feed post created in [start, end) with most reactions from people other than its author;
+    ties -> most distinct (non-author) reactors, then earliest. Self-reactions never count."""
     return db.execute(
         """
         SELECT p.id, p.user_id, p.created_at, COUNT(r.id) AS n, COUNT(DISTINCT r.user_id) AS d
         FROM posts p
-        JOIN reactions r ON r.target_type = 'post' AND r.target_id = p.id
+        JOIN reactions r ON r.target_type = 'post' AND r.target_id = p.id AND r.user_id != p.user_id
         WHERE p.created_at >= ? AND p.created_at < ?
         GROUP BY p.id
         HAVING COUNT(r.id) >= 1
@@ -460,6 +467,11 @@ def toggle_reaction(kind, target_id):
             owner = db.execute(f"SELECT {owner_col} AS uid FROM {table} WHERE id = ?", (target_id,)).fetchone()
             if owner:
                 notify(db, owner["uid"], viewer["id"], "reaction", kind, target_id, emoji)
+                if owner["uid"] == viewer["id"]:
+                    db.execute(
+                        f"UPDATE {table} SET self_reacted_at = ? WHERE id = ? AND self_reacted_at IS NULL",
+                        (_now_utc().isoformat(), target_id),
+                    )
     else:
         # Un-react: drop the matching unread notification.
         db.execute(
@@ -471,7 +483,9 @@ def toggle_reaction(kind, target_id):
     if _wants_json():
         rx = load_reactions(db, kind, [target_id], viewer["id"])[target_id]
         bar = get_template_attribute("_reactions.html", "reaction_bar")
-        return jsonify({"ok": True, "on": on, "html": str(bar(kind, target_id, rx))})
+        mark = db.execute(f"SELECT self_reacted_at FROM {table} WHERE id = ?", (target_id,)).fetchone()
+        return jsonify({"ok": True, "on": on, "html": str(bar(kind, target_id, rx)),
+                        "self_reacted": bool(mark and mark["self_reacted_at"])})
     anchor = ("#post-%d" if kind == "post" else "#bp-%d") % target_id
     return redirect(back.split("#")[0] + anchor)
 
@@ -483,7 +497,8 @@ def _cheek_squeak_context(db, viewer):
     out = {"label": _week_label(week_start), "winner": None, "leader": None}
     if award:
         row = db.execute(
-            "SELECT p.id, p.user_id, p.content, p.audio_path, p.created_at, COALESCE(u.username, 'unknown') AS username "
+            "SELECT p.id, p.user_id, p.content, p.audio_path, p.created_at, p.self_reacted_at, "
+            "COALESCE(u.username, 'unknown') AS username "
             "FROM posts p LEFT JOIN users u ON u.id = p.user_id WHERE p.id = ?",
             (award["post_id"],),
         ).fetchone()
@@ -578,7 +593,7 @@ def index():
     db = get_db()
     base_sql = """
         SELECT posts.id, posts.user_id, posts.content, posts.created_at, posts.audio_path,
-               posts.pinned_at, COALESCE(users.username, 'unknown') AS username
+               posts.pinned_at, posts.self_reacted_at, COALESCE(users.username, 'unknown') AS username
         FROM posts
         LEFT JOIN users ON posts.user_id = users.id
     """
@@ -600,6 +615,7 @@ def index():
             "audio_path": row["audio_path"],
             "username": row["username"],
             "pinned": bool(row["pinned_at"]),
+            "self_reacted": bool(row["self_reacted_at"]),
             "can_pin": can_pin_post(viewer, row["user_id"], viewer_admin),
             "can_manage": can_manage_post(viewer, row["user_id"]),
         })
@@ -914,7 +930,7 @@ def _load_top_posts(db, user_row):
         if not pid:
             continue
         post = db.execute(
-            "SELECT id, content, created_at, audio_path, pinned_at FROM posts WHERE id = ? AND user_id = ?",
+            "SELECT id, content, created_at, audio_path, pinned_at, self_reacted_at FROM posts WHERE id = ? AND user_id = ?",
             (pid, user_row["id"]),
         ).fetchone()
         if post:
@@ -953,6 +969,7 @@ def user_profile(username):
             "audio_path": post["audio_path"],
             "can_manage": is_owner or viewer_admin,
             "pinned": bool(post["pinned_at"]),
+            "self_reacted": bool(post["self_reacted_at"]),
             "can_pin": can_pin_post(viewer, profile["id"], viewer_admin),
         })
     board = _load_board(db, profile["id"], viewer)
@@ -1025,7 +1042,7 @@ def _save_audio_upload(clip, prefix="bd_"):
 def _load_board(db, board_user_id, viewer):
     rows = db.execute(
         """
-        SELECT b.id, b.board_user_id, b.author_id, b.body, b.audio_path, b.created_at,
+        SELECT b.id, b.board_user_id, b.author_id, b.body, b.audio_path, b.created_at, b.self_reacted_at,
                u.username AS author_username, u.avatar_path AS author_avatar
         FROM board_posts b
         LEFT JOIN users u ON u.id = b.author_id
@@ -1043,6 +1060,7 @@ def _load_board(db, board_user_id, viewer):
             "created_at": r["created_at"] or "",
             "author_username": r["author_username"],
             "author_avatar": r["author_avatar"],
+            "self_reacted": bool(r["self_reacted_at"]),
             "can_delete": can_delete_board_post(viewer, r),
         }
         for r in rows

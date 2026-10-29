@@ -145,6 +145,12 @@
         .welcome-cta { display: block; text-align: center; background: #c47a12; color: #fff !important; font-size: 19px; font-weight: 700;
                        padding: 16px 20px; border-radius: 10px; text-decoration: none; margin: 8px 0 24px; min-height: 24px; }
         .welcome-cta:hover { background: #a9680f; }
+        /* Self-reaction shame: permanent hot pink outline (wins over pinned/squeak amber border) */
+        .self-reacted, .card.self-reacted, .card.post-pinned.self-reacted, .card.squeak-card.self-reacted {
+            border: 3px solid #ff1493 !important; box-shadow: 0 0 0 1px rgba(255,20,147,.15), 0 2px 8px rgba(255,20,147,.22); }
+        .top-fart.self-reacted, .board-item.self-reacted { border-radius: 12px; padding: 10px; margin: 6px 0; }
+        .geek-badge { display: inline-block; font-size: 12px; font-weight: 700; color: #fff; background: #ff1493;
+                      border-radius: 999px; padding: 3px 10px; margin: 0 0 8px; line-height: 1.35; }
         .notif-badge { display: inline-block; min-width: 18px; padding: 1px 6px; border-radius: 999px; background: #d93025; color: #fff;
                        font-size: 11px; font-weight: 700; line-height: 16px; text-align: center; vertical-align: 1px; box-sizing: border-box; }
         .nav-ico { position: relative; }
@@ -373,6 +379,18 @@
       .then(function (r) { if (r.status === 401) { window.location.href = "/login"; throw 0; } return r.json(); })
       .then(function (d) {
         if (!d || !d.ok) throw 0;
+        if (d.self_reacted) {
+          var key = form.action.match(/\/react\/(post|board)\/(\d+)/);
+          if (key) document.querySelectorAll('[data-geek="' + key[1] + ':' + key[2] + '"]').forEach(function (el) {
+            el.classList.add("self-reacted");
+            if (el.querySelector(".geek-badge")) return;
+            var b = document.createElement("div");
+            b.className = "geek-badge";
+            b.innerHTML = '<span aria-hidden="true">🤓</span> I liked my own squeak, I must be a geek!';
+            var anchor = el.querySelector(".post-card-head, .squeak-meta");
+            if (anchor) anchor.parentNode.insertBefore(b, anchor); else el.insertBefore(b, el.firstChild);
+          });
+        }
         var tmp = document.createElement("div");
         tmp.innerHTML = d.html;
         var fresh = tmp.firstElementChild;

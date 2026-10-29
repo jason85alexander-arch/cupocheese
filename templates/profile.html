@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ profile.username }} - Cup O' Cheese{% endblock %}
 {% block content %}
-{% from "_reactions.html" import reaction_bar %}
+{% from "_reactions.html" import reaction_bar, geek_badge %}
 <div class="card profile-header">
     <div class="profile-top profile-top-xl">
         {% if profile.avatar_path %}
@@ -25,9 +25,10 @@
     {% if tops %}
     <ol class="top-farts">
         {% for post in tops %}
-        <li class="top-fart" id="post-{{ post.id }}">
+        <li class="top-fart{% if post.self_reacted %} self-reacted{% endif %}" id="post-{{ post.id }}" data-geek="post:{{ post.id }}">
             <span class="top-rank">#{{ loop.index }}</span>
             <div class="top-body">
+                {{ geek_badge(post.self_reacted) }}
                 <div class="post-card-head">
                     <div class="post-meta">{% if post.pinned %}<span class="pin-label pin-inline">📌 Pinned</span> · {% endif %}{{ post.created_at[:16].replace('T', ' ') }}</div>
                     {% if post.can_manage %}
@@ -84,7 +85,8 @@
     {% if board %}
     <ul class="board-list">
         {% for bp in board %}
-        <li class="board-item" id="bp-{{ bp.id }}">
+        <li class="board-item{% if bp.self_reacted %} self-reacted{% endif %}" id="bp-{{ bp.id }}" data-geek="board:{{ bp.id }}">
+            {{ geek_badge(bp.self_reacted) }}
             <div class="post-card-head">
                 <div class="post-meta">
                     {% if bp.author_username %}
