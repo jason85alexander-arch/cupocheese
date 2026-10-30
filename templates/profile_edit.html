@@ -5,6 +5,14 @@
     <h1 class="profile-name" style="margin-top:0">Edit profile</h1>
     <p class="muted">Frame your mug in the circle, then crown your top three.</p>
     <form id="profile-form" action="{{ url_for('edit_profile') }}" method="post" enctype="multipart/form-data">
+        <label for="username"><strong>Username</strong></label>
+        <input type="text" id="username" name="username" value="{{ profile.username }}" required minlength="{{ username_min }}" maxlength="{{ username_max }}" autocomplete="username" autocapitalize="off" spellcheck="false"{% if username_unlock %} readonly aria-describedby="username-note"{% endif %} title="Letters, numbers, underscores, dots, and dashes (no spaces)">
+        {% if username_unlock %}
+        <p class="name-note" id="username-note">⏳ You can change your username again on {{ username_unlock }}.</p>
+        {% else %}
+        <p class="name-note" id="username-note">✏️ Letters, numbers, _ . - only. Heads up: once you change it, it's locked for {{ username_days }} days.</p>
+        {% endif %}
+
         <label for="first_name"><strong>Your real name</strong></label>
         <div class="name-fields">
             <div class="name-row">

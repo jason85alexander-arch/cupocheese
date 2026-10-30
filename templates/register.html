@@ -16,7 +16,7 @@
         {% else %}
         <input type="text" name="invite" placeholder="Invite code" required autocomplete="off" value="{{ invite_code or '' }}">
         {% endif %}
-        <input type="text" name="username" placeholder="Choose a username" required autocomplete="username">
+        <input type="text" name="username" placeholder="Choose a username" required minlength="2" maxlength="30" pattern="[A-Za-z0-9_.\-]+" title="2–30 letters, numbers, underscores, dots, or dashes (no spaces)" autocomplete="username" autocapitalize="off" spellcheck="false">
         <div class="name-fields">
             <div class="name-row">
                 <input type="text" name="first_name" placeholder="First name" required maxlength="{{ name_max }}" autocomplete="given-name" autocapitalize="words" aria-label="First name">

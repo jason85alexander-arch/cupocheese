@@ -7,6 +7,7 @@ import time
 from flask import Flask, has_app_context, render_template, request, redirect, url_for, session, flash, send_from_directory, g, jsonify, get_template_attribute, abort
 from markupsafe import Markup
 import json
+import re
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import sqlite3
@@ -217,6 +218,60 @@ def has_real_name(user):
         return False
 
 
+# ---- Usernames: shared rules for signup + rename ----
+USERNAME_MIN, USERNAME_MAX = 2, 30
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+USERNAME_CHANGE_DAYS = 90
+
+
+def username_error(db, name, exclude_user_id=None):
+    """Return a friendly error message, or None if `name` (already trimmed) is usable."""
+    if not name:
+        return "Pick a username."
+    if len(name) < USERNAME_MIN or len(name) > USERNAME_MAX:
+        return f"Usernames are {USERNAME_MIN}–{USERNAME_MAX} characters."
+    if not USERNAME_RE.match(name):
+        return "Usernames can use letters, numbers, underscores, dots, and dashes (no spaces)."
+    row = db.execute("SELECT id FROM users WHERE lower(username) = lower(?)", (name,)).fetchone()
+    if row and row["id"] != exclude_user_id:
+        return "Username already taken"
+    return None
+
+
+def username_unlock_at(user):
+    """UTC datetime when this member may rename again, or None if they can now."""
+    try:
+        raw = user["username_changed_at"]
+    except (KeyError, IndexError):
+        raw = None
+    if not raw:
+        return None
+    try:
+        last = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    unlock = last + timedelta(days=USERNAME_CHANGE_DAYS)
+    return unlock if _now_utc() < unlock else None
+
+
+def ct_date(dt_utc):
+    """'Fri, Jan 29, 2027' in Central time from a naive-UTC datetime."""
+    d = dt_utc.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("America/Chicago"))
+    return f"{d.strftime('%a, %b')} {d.day}, {d.year}"
+
+
+def rename_user(db, user, new_name):
+    """Rename in one transaction. Everything else references users.id, so only users changes
+    (plus a history row for old-URL redirects). Caller commits."""
+    now = _now_utc().isoformat()
+    db.execute("INSERT INTO username_history (user_id, old_username, changed_at) VALUES (?, ?, ?)",
+               (user["id"], user["username"], now))
+    db.execute("UPDATE users SET username = ?, username_changed_at = ? WHERE id = ?", (new_name, now, user["id"]))
+    # Env-listed admins (CUPOCHEESE_ADMINS) are matched by name; keep their admin via the DB flag.
+    if (user["username"] or "").strip().lower() in _admin_usernames():
+        db.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (user["id"],))
+
+
 # Signed-in members with no first/last name are sent to /add-name first.
 NAME_GATE_EXEMPT = {"add_name", "logout", "static", "healthz", "service_worker", "pwa_manifest", "offline"}
 
@@ -341,6 +396,7 @@ def _init_db_locked(db):
             ("back_draft_seen_at", "TEXT"),
             ("first_name", "TEXT"),
             ("last_name", "TEXT"),
+            ("username_changed_at", "TEXT"),
         ):
             if col not in cols:
                 db.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
@@ -363,6 +419,16 @@ def _init_db_locked(db):
             ).fetchone()
             if first:
                 db.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (first["id"],))
+        # Old usernames (so /u/<old name> links redirect after a rename).
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS username_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                old_username TEXT NOT NULL,
+                changed_at TEXT
+            )
+        """)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_username_history_old ON username_history (lower(old_username))")
         # Cheese Boards: members post on each other's profile pages (no DMs).
         db.execute("""
             CREATE TABLE IF NOT EXISTS board_posts (
@@ -1105,8 +1171,9 @@ def register():
         if password != password_confirm:
             flash("Passwords must match")
             return redirect(back)
-        if db.execute("SELECT 1 FROM users WHERE lower(username) = lower(?)", (username,)).fetchone():
-            flash("Username already taken")
+        uerr = username_error(db, username)
+        if uerr:
+            flash(uerr)
             return redirect(back)
         if db.execute("SELECT 1 FROM users WHERE lower(email) = lower(?)", (email,)).fetchone():
             flash("Email already registered")
@@ -1449,6 +1516,12 @@ def user_profile(username):
     db = get_db()
     profile = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     if not profile:
+        moved = db.execute(
+            "SELECT u.username FROM username_history h JOIN users u ON u.id = h.user_id "
+            "WHERE lower(h.old_username) = lower(?) ORDER BY h.id DESC LIMIT 1", (username,)
+        ).fetchone()
+        if moved:
+            return redirect(url_for("user_profile", username=moved["username"]))
         flash("No member by that name.")
         return redirect(url_for("index"))
     ensure_weekly_award(db)
@@ -1716,6 +1789,18 @@ def edit_profile():
         if not first_name or not last_name:
             flash("First and last name can't be blank (only admins can see them).")
             return redirect(url_for("edit_profile"))
+        new_username = (request.form.get("username") or "").strip()
+        rename_to = None
+        if new_username and new_username != user["username"]:
+            unlock = username_unlock_at(user)
+            if unlock:
+                flash(f"You can change your username again on {ct_date(unlock)}.")
+                return redirect(url_for("edit_profile"))
+            uerr = username_error(db, new_username, exclude_user_id=user["id"])
+            if uerr:
+                flash(uerr)
+                return redirect(url_for("edit_profile"))
+            rename_to = new_username
 
         avatar = request.files.get("avatar")
         new_avatar = None
@@ -1792,9 +1877,20 @@ def edit_profile():
                 (t1, t2, t3, user["id"]),
             )
         db.execute("UPDATE users SET first_name = ?, last_name = ? WHERE id = ?", (first_name, last_name, user["id"]))
+        if rename_to:
+            try:
+                rename_user(db, user, rename_to)
+            except sqlite3.IntegrityError:
+                db.rollback()
+                flash("Username already taken")
+                return redirect(url_for("edit_profile"))
         db.commit()
-        flash("Profile updated — looking sharp (and fragrant).")
-        return redirect(url_for("user_profile", username=user["username"]))
+        if rename_to:
+            session["username"] = rename_to
+            flash(f"Profile updated — you're now {rename_to}. Same cheese, new label.")
+        else:
+            flash("Profile updated — looking sharp (and fragrant).")
+        return redirect(url_for("user_profile", username=rename_to or user["username"]))
 
     user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
     my_posts = db.execute(
@@ -1806,6 +1902,10 @@ def edit_profile():
         profile=user,
         my_posts=my_posts,
         username=session.get("username"),
+        username_unlock=(ct_date(username_unlock_at(user)) if username_unlock_at(user) else None),
+        username_days=USERNAME_CHANGE_DAYS,
+        username_min=USERNAME_MIN,
+        username_max=USERNAME_MAX,
     )
 
 
