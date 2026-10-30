@@ -32,7 +32,7 @@
             <div class="top-body">
                 {{ geek_badge(post.self_reacted) }}
                 <div class="post-card-head">
-                    <div class="post-meta">{% if post.pinned %}<span class="pin-label pin-inline">📌 Pinned</span> · {% endif %}{{ post.created_at[:16].replace('T', ' ') }}</div>
+                    <div class="post-meta">{% if post.pinned %}<span class="pin-label pin-inline">📌 Pinned</span> · {% endif %}{{ post.created_at|ct_time }}</div>
                     {% if post.can_manage %}
                     <div class="post-menu">
                         <button type="button" class="post-menu-btn" aria-label="Post options" aria-expanded="false" aria-haspopup="true">⋯</button>
@@ -102,7 +102,7 @@
                     {% else %}
                     <span class="avatar avatar-sm avatar-placeholder" aria-hidden="true">🧀</span><strong>former member</strong>
                     {% endif %}
-                    · {{ bp.created_at[:16].replace('T', ' ') }}
+                    · {{ bp.created_at|ct_time }}
                 </div>
                 {% if bp.can_delete %}
                 <div class="post-menu">

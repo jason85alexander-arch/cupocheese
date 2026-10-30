@@ -52,7 +52,7 @@
             <option value="">— none —</option>
             {% for post in my_posts %}
             <option value="{{ post.id }}" {% if selected[slot - 1] == post.id %}selected{% endif %}>
-                #{{ post.id }} · {{ post.created_at[:16].replace('T', ' ') }}{% if post.content %} — {{ post.content[:60] }}{% if post.content|length > 60 %}…{% endif %}{% elif post.audio_path %} — 🎙 clip{% endif %}
+                #{{ post.id }} · {{ post.created_at|ct_time }}{% if post.content %} — {{ post.content[:60] }}{% if post.content|length > 60 %}…{% endif %}{% elif post.audio_path %} — 🎙 clip{% endif %}
             </option>
             {% endfor %}
         </select>

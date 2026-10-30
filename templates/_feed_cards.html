@@ -12,7 +12,7 @@
             <strong>{{ 'former member' if is_board else post.username }}</strong>
             {% endif %}
             {% if is_board %}<span class="board-on">💨 on {% if post.board_owner %}<a href="{{ url_for('user_profile', username=post.board_owner) }}#board">{{ post.board_owner }}'s Cheese Board</a>{{ admin_badge(post.board_owner) }}{{ member_no(post.board_owner) }}{% else %}a Cheese Board{% endif %}</span>{% endif %}
-            · {{ post.created_at[:16].replace('T', ' ') }}
+            · {{ post.created_at|ct_time }}
         </div>
         {% if post.can_manage and is_board %}
         <div class="post-menu">

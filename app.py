@@ -254,9 +254,12 @@ def username_unlock_at(user):
     return unlock if _now_utc() < unlock else None
 
 
-def ct_date(dt_utc):
-    """'Fri, Jan 29, 2027' in Central time from a naive-UTC datetime."""
-    d = dt_utc.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("America/Chicago"))
+@app.template_filter("ct_date")
+def ct_date(value):
+    """Stored UTC -> Central calendar date, e.g. 'Thu, Jan 28, 2027'."""
+    d = to_central(value)
+    if d is None:
+        return ""
     return f"{d.strftime('%a, %b')} {d.day}, {d.year}"
 
 
@@ -660,7 +663,7 @@ def week_bounds(now_utc=None, weeks_back=0):
     weeks_back=0 is the current (in-progress) week, 1 is the most recent completed week.
     """
     now_utc = now_utc or _now_utc()
-    now_ct = now_utc.replace(tzinfo=timezone.utc).astimezone(CENTRAL)
+    now_ct = to_central(now_utc)
     monday = (now_ct - timedelta(days=now_ct.weekday())).date() - timedelta(weeks=weeks_back)
     start_ct = datetime(monday.year, monday.month, monday.day, tzinfo=CENTRAL)
     nxt = monday + timedelta(days=7)
@@ -743,14 +746,28 @@ def ensure_weekly_award(db, now_utc=None):
     return row
 
 
-@app.template_filter("ct_time")
-def ct_time(iso):
-    """Stored naive-UTC ISO timestamp -> 'Oct 28, 11:05 PM CT'."""
+def to_central(value):
+    """The one UTC->Central converter. Accepts a stored naive-UTC ISO string or a naive-UTC
+    datetime; returns an aware America/Chicago datetime (CST/CDT handled by zoneinfo), or None."""
+    if not value:
+        return None
     try:
-        dt = datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).astimezone(CENTRAL)
+        dt = value if isinstance(value, datetime) else datetime.fromisoformat(value)
     except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(CENTRAL)
+
+
+@app.template_filter("ct_time")
+def ct_time(value):
+    """Stored UTC -> 'Oct 30, 3:26 PM CDT' (adds the year if it isn't this year in Central)."""
+    dt = to_central(value)
+    if dt is None:
         return ""
-    return dt.strftime("%b %-d, %-I:%M %p") + " CT"
+    year = f", {dt.year}" if dt.year != to_central(_now_utc()).year else ""
+    return f"{dt.strftime('%b')} {dt.day}{year}, {dt.strftime('%-I:%M %p')} {dt.tzname()}"
 
 
 def award_count(db, user_id):
