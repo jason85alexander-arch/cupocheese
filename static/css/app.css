@@ -313,3 +313,10 @@ img, audio, video { max-width: 100%; }
 .load-more-btn { display: inline-block; padding: 10px 22px; border-radius: 999px; background: #c47a12; color: #fff; font-weight: 600; text-decoration: none; min-height: 44px; line-height: 24px; }
 .load-more-btn.busy { opacity: .6; pointer-events: none; }
 .feed-back { text-align: center; }
+
+/* Real names: required at signup, shown to admins only */
+.name-fields { margin: 0 0 4px; }
+.name-row { display: flex; gap: 8px; }
+.name-row input { flex: 1 1 0; min-width: 0; }
+.name-note { margin: -4px 0 12px; padding: 6px 10px; background: #fff3d6; border: 1px dashed #e0a030; border-radius: 6px; color: #7a5a20; font-size: 13px; line-height: 1.35; }
+.real-name { display: block; color: #7a6a55; font-size: 13px; font-weight: 400; margin: 2px 0 0; }

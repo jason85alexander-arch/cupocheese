@@ -5,6 +5,15 @@
     <h1 class="profile-name" style="margin-top:0">Edit profile</h1>
     <p class="muted">Frame your mug in the circle, then crown your top three.</p>
     <form id="profile-form" action="{{ url_for('edit_profile') }}" method="post" enctype="multipart/form-data">
+        <label for="first_name"><strong>Your real name</strong></label>
+        <div class="name-fields">
+            <div class="name-row">
+                <input type="text" id="first_name" name="first_name" placeholder="First name" required maxlength="{{ name_max }}" autocomplete="given-name" autocapitalize="words" aria-label="First name" value="{{ profile.first_name or '' }}">
+                <input type="text" id="last_name" name="last_name" placeholder="Last name" required maxlength="{{ name_max }}" autocomplete="family-name" autocapitalize="words" aria-label="Last name" value="{{ profile.last_name or '' }}">
+            </div>
+            <p class="name-note">{{ name_note }}</p>
+        </div>
+
         <label for="avatar"><strong>Profile picture</strong></label>
         <input type="file" id="avatar" name="avatar" accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif">
         <p class="muted" style="margin-top:-4px">jpeg / png / webp / gif · max 5 MB · drag to pan, slider to zoom</p>

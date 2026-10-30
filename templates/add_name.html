@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Add your name - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>One quick thing 🧀</h2>
+    <p class="muted">We now ask every member for their first and last name. Fill these in and you're back to the toots.</p>
+    <form method="post" id="add-name-form" action="{{ url_for('add_name') }}">
+        <div class="name-fields">
+            <div class="name-row">
+                <input type="text" name="first_name" placeholder="First name" required maxlength="{{ name_max }}" autocomplete="given-name" autocapitalize="words" aria-label="First name" value="{{ first_name }}">
+                <input type="text" name="last_name" placeholder="Last name" required maxlength="{{ name_max }}" autocomplete="family-name" autocapitalize="words" aria-label="Last name" value="{{ last_name }}">
+            </div>
+            <p class="name-note">{{ name_note }}</p>
+        </div>
+        <button type="submit">Save and let 'er rip</button>
+    </form>
+    <p style="text-align:center;margin:0"><a href="{{ url_for('logout') }}">Log out</a></p>
+</div>
+<script>
+(function () {
+  var form = document.getElementById("add-name-form");
+  form.addEventListener("submit", function (e) {
+    form.querySelectorAll("input[type=text]").forEach(function (el) { el.value = el.value.trim(); });
+    if (!form.checkValidity()) { e.preventDefault(); form.reportValidity(); }
+  });
+})();
+</script>
+{% endblock %}

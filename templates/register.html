@@ -17,6 +17,13 @@
         <input type="text" name="invite" placeholder="Invite code" required autocomplete="off" value="{{ invite_code or '' }}">
         {% endif %}
         <input type="text" name="username" placeholder="Choose a username" required autocomplete="username">
+        <div class="name-fields">
+            <div class="name-row">
+                <input type="text" name="first_name" placeholder="First name" required maxlength="{{ name_max }}" autocomplete="given-name" autocapitalize="words" aria-label="First name">
+                <input type="text" name="last_name" placeholder="Last name" required maxlength="{{ name_max }}" autocomplete="family-name" autocapitalize="words" aria-label="Last name">
+            </div>
+            <p class="name-note">{{ name_note }}</p>
+        </div>
         {% if invite_email %}
         <input type="email" name="email" value="{{ invite_email }}" readonly required autocomplete="email" aria-label="Email (set by your invite)">
         {% else %}
@@ -56,6 +63,10 @@
   confirm.addEventListener("input", updateMismatch);
 
   form.addEventListener("submit", function (e) {
+    form.querySelectorAll('input[name="first_name"], input[name="last_name"]').forEach(function (el) {
+      el.value = el.value.trim();
+    });
+    if (!form.checkValidity()) { e.preventDefault(); form.reportValidity(); return; }
     updateMismatch();
     if (!passwordsMatch()) {
       e.preventDefault();

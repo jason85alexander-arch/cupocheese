@@ -175,7 +175,69 @@ def _inject_admin_badge():
         if not n:
             return ""
         return Markup(f' <span class="member-no" title="Member #{n} (join order, admins only)">#{n}</span>')
-    return {"admin_badge": admin_badge, "viewer_is_admin": _viewer_is_admin, "member_no": member_no}
+    def real_name(username):
+        """Admin-only real name ('First Last'). Empty string for non-admins, always."""
+        if not _viewer_is_admin():
+            return ""
+        uname = (username or "").strip().lower()
+        if not uname:
+            return ""
+        names = getattr(g, "_real_names", None)
+        if names is None:
+            names = {}
+            try:
+                db = get_db()
+                for r in db.execute("SELECT username, first_name, last_name FROM users"):
+                    full = " ".join(p for p in ((r["first_name"] or "").strip(), (r["last_name"] or "").strip()) if p)
+                    if full:
+                        names[(r["username"] or "").strip().lower()] = full
+                db.close()
+            except sqlite3.Error:
+                pass
+            g._real_names = names
+        return names.get(uname, "")
+    return {"admin_badge": admin_badge, "viewer_is_admin": _viewer_is_admin, "member_no": member_no,
+            "real_name": real_name, "name_max": NAME_MAX_CHARS, "name_note": NAME_PRIVACY_NOTE}
+
+
+# ---- Real names (first/last): required, but only admins ever see them ----
+NAME_MAX_CHARS = 40
+NAME_PRIVACY_NOTE = "🔒 Only admins can see your real name. Everyone else just sees your username."
+
+
+def clean_name(raw):
+    """Trim, collapse inner whitespace, cap length. Returns '' when blank."""
+    return " ".join((raw or "").split())[:NAME_MAX_CHARS]
+
+
+def has_real_name(user):
+    try:
+        return bool((user["first_name"] or "").strip()) and bool((user["last_name"] or "").strip())
+    except (KeyError, IndexError, TypeError):
+        return False
+
+
+# Signed-in members with no first/last name are sent to /add-name first.
+NAME_GATE_EXEMPT = {"add_name", "logout", "static", "healthz", "service_worker", "pwa_manifest", "offline"}
+
+
+@app.before_request
+def _require_real_name():
+    if request.endpoint in NAME_GATE_EXEMPT or request.endpoint is None:
+        return None
+    uid = session.get("user_id")
+    if not uid:
+        return None
+    try:
+        row = get_db().execute("SELECT first_name, last_name FROM users WHERE id = ?", (uid,)).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None or has_real_name(row):
+        return None
+    target = url_for("add_name")
+    if _wants_json():
+        return jsonify({"ok": False, "error": "name required", "redirect": target}), 403
+    return redirect(target)
 
 
 def _viewer_is_admin():
@@ -277,6 +339,8 @@ def _init_db_locked(db):
             ("is_admin", "INTEGER DEFAULT 0"),
             ("member_no", "INTEGER"),
             ("back_draft_seen_at", "TEXT"),
+            ("first_name", "TEXT"),
+            ("last_name", "TEXT"),
         ):
             if col not in cols:
                 db.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
@@ -1012,6 +1076,8 @@ def register():
         password = request.form.get("password", "")
         password_confirm = request.form.get("password_confirm", "")
         invite = request.form.get("invite", "").strip()
+        first_name = clean_name(request.form.get("first_name"))
+        last_name = clean_name(request.form.get("last_name"))
         back = url_for("register", invite=invite) if invite else url_for("register")
         user_count = db.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
         inv = None
@@ -1026,6 +1092,9 @@ def register():
                 return redirect(back)
         if not username or not email or not password:
             flash("Username, email, and password required")
+            return redirect(back)
+        if not first_name or not last_name:
+            flash("First and last name required (only admins can see them).")
             return redirect(back)
         if "@" not in email or "." not in email.split("@")[-1]:
             flash("Enter a valid email address")
@@ -1045,9 +1114,9 @@ def register():
         now = datetime.utcnow().isoformat()
         try:
             cur = db.execute(
-                "INSERT INTO users (username, email, password_hash, created_at, is_admin, member_no, back_draft_seen_at) "
-                "VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(member_no), 0) + 1 FROM users), ?)",
-                (username, email, generate_password_hash(password), now, 1 if bootstrap else 0, now)
+                "INSERT INTO users (username, email, password_hash, created_at, is_admin, member_no, back_draft_seen_at, first_name, last_name) "
+                "VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(member_no), 0) + 1 FROM users), ?, ?, ?)",
+                (username, email, generate_password_hash(password), now, 1 if bootstrap else 0, now, first_name, last_name)
             )
             new_id = cur.lastrowid
             if inv is not None:
@@ -1112,6 +1181,28 @@ def welcome():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+@app.route("/add-name", methods=["GET", "POST"])
+def add_name():
+    """One-time stop for members who joined before names were required."""
+    user = require_user()
+    if not user:
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        first_name = clean_name(request.form.get("first_name"))
+        last_name = clean_name(request.form.get("last_name"))
+        if not first_name or not last_name:
+            flash("Both first and last name, please.")
+            return render_template("add_name.html", first_name=first_name, last_name=last_name), 400
+        db = get_db()
+        db.execute("UPDATE users SET first_name = ?, last_name = ? WHERE id = ?", (first_name, last_name, user["id"]))
+        db.commit()
+        flash("Thanks! Now go let 'er rip.")
+        return redirect(url_for("index"))
+    if has_real_name(user):
+        return redirect(url_for("index"))
+    return render_template("add_name.html", first_name=user["first_name"] or "", last_name=user["last_name"] or "")
 
 @app.route("/clip/<filename>")
 def serve_clip(filename):
@@ -1620,6 +1711,12 @@ def edit_profile():
     if request.method == "POST":
         # Refresh user row for latest avatar / tops
         user = db.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+        first_name = clean_name(request.form.get("first_name"))
+        last_name = clean_name(request.form.get("last_name"))
+        if not first_name or not last_name:
+            flash("First and last name can't be blank (only admins can see them).")
+            return redirect(url_for("edit_profile"))
+
         avatar = request.files.get("avatar")
         new_avatar = None
         if avatar and getattr(avatar, "filename", None):
@@ -1694,6 +1791,7 @@ def edit_profile():
                 "UPDATE users SET top1_post_id = ?, top2_post_id = ?, top3_post_id = ? WHERE id = ?",
                 (t1, t2, t3, user["id"]),
             )
+        db.execute("UPDATE users SET first_name = ?, last_name = ? WHERE id = ?", (first_name, last_name, user["id"]))
         db.commit()
         flash("Profile updated — looking sharp (and fragrant).")
         return redirect(url_for("user_profile", username=user["username"]))

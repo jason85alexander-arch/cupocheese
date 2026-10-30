@@ -23,6 +23,7 @@
             {% if m.is_you %}
             <span class="muted"> · that's you</span>
             {% endif %}
+            {% set rn = real_name(m.username) %}{% if rn %}<span class="real-name" title="Real name (admins only)">{{ rn }}</span>{% endif %}
         </div>
     </a>
     {% if m.admin %}{% set a = m.admin %}{% set next_url = url_for('people') %}{% include "_admin_toggle.html" %}{% endif %}
