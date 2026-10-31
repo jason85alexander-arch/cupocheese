@@ -1,0 +1,12 @@
+<div class="who-sheet-inner">
+  <div class="who-head"><strong>Who reacted</strong><button type="button" class="who-close" aria-label="Close">✕</button></div>
+  {% if not groups %}<p class="muted">No reactions yet.</p>{% endif %}
+  <ul class="who-list">
+  {% for g in groups %}
+    <li class="who-group">
+      <span class="who-e" title="{{ g.label }}">{{ rx_glyph(g.emoji) }}</span><span class="who-n">{{ g.people|length }}</span>
+      <span class="who-names">{% for p in g.people %}{% if p.username %}<a href="{{ url_for('user_profile', username=p.username) }}" title="{{ p.at|ct_time }}">{{ p.username }}</a>{% else %}<span class="muted">former member</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</span>
+    </li>
+  {% endfor %}
+  </ul>
+</div>

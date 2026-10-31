@@ -99,6 +99,27 @@ window.CocClip = (function () {
       })
       .catch(function () { form.classList.remove("rx-busy"); });
   });
+  /* who-reacted sheet */
+  function closeWho() { var b = document.querySelector(".who-backdrop"); if (b) b.remove(); }
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeWho(); });
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest ? e.target.closest(".rx-who") : null;
+    if (t) {
+      e.preventDefault();
+      fetch(t.getAttribute("data-who"), { credentials: "same-origin", headers: { "Accept": "application/json" } })
+        .then(function (r) { if (r.status === 401) { window.location.href = "/login"; throw 0; } return r.json(); })
+        .then(function (d) {
+          if (!d || !d.ok) return;
+          closeWho();
+          var bd = document.createElement("div"); bd.className = "who-backdrop";
+          var sh = document.createElement("div"); sh.className = "who-sheet";
+          sh.setAttribute("role", "dialog"); sh.setAttribute("aria-label", "Who reacted");
+          sh.innerHTML = d.html; bd.appendChild(sh); document.body.appendChild(bd);
+          bd.addEventListener("click", function (ev) { if (ev.target === bd || ev.target.closest(".who-close")) closeWho(); });
+        }).catch(function () {});
+      return;
+    }
+  });
   /* close open pickers when clicking elsewhere */
   document.addEventListener("click", function (e) {
     document.querySelectorAll(".rx-picker[open]").forEach(function (d) {

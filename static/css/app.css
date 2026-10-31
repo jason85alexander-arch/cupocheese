@@ -323,3 +323,15 @@ img, audio, video { max-width: 100%; }
 
 /* Custom image reactions sit on the emoji line, same height as emoji glyphs */
 .rx-img { width: 1.2em; height: 1.2em; vertical-align: -0.25em; display: inline-block; object-fit: contain; }
+.rx-who { display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0 8px; border-radius: 999px; border: 1px solid #e3d6bd; background: #fff; color: #7a6a55; font-size: 14px; width: auto !important; }
+.who-backdrop { position: fixed; inset: 0; background: rgba(40,30,15,.35); z-index: 900; display: flex; align-items: flex-end; justify-content: center; }
+.who-sheet { width: 100%; max-width: 520px; max-height: 70vh; overflow-y: auto; background: #fffaf0; border-radius: 18px 18px 0 0; padding: 14px 16px calc(18px + env(safe-area-inset-bottom)); box-shadow: 0 -6px 20px rgba(0,0,0,.15); box-sizing: border-box; }
+@media (min-width: 700px) { .who-backdrop { align-items: center; } .who-sheet { border-radius: 18px; } }
+.who-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: #4a3b28; }
+.who-close { width: auto !important; background: transparent; border: 0; font-size: 18px; color: #7a6a55; padding: 4px 8px; }
+.who-list { list-style: none; margin: 0; padding: 0; }
+.who-group { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; border-top: 1px solid #efe4cf; }
+.who-e { font-size: 20px; line-height: 1; min-width: 26px; text-align: center; }
+.who-e .rx-img { width: 22px; height: 22px; }
+.who-n { font-size: 12px; font-weight: 600; color: #7a6a55; min-width: 16px; padding-top: 3px; }
+.who-names { flex: 1; line-height: 1.5; word-break: break-word; }

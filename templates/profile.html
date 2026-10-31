@@ -43,7 +43,7 @@
                                 <button type="submit" class="pin-btn" role="menuitem">{{ '📌 Unpin' if post.pinned else '📌 Pin to top' }}</button>
                             </form>
                             {% endif %}
-                            <a role="menuitem" href="{{ url_for('edit_post', post_id=post.id) }}">Edit</a>
+                            {% if post.can_edit %}<a role="menuitem" href="{{ url_for('edit_post', post_id=post.id) }}">Edit</a>{% endif %}
                             <form class="delete-form" action="{{ url_for('delete_post', post_id=post.id) }}" method="post"
                                   onsubmit="return confirm('Delete this post?');">
                                 <button type="submit" class="delete-btn menu-danger" role="menuitem">Delete</button>

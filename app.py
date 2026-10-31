@@ -331,8 +331,13 @@ def can_delete_post(viewer, post_user_id):
     return is_admin_user(viewer)
 
 
+def can_edit_post(viewer, post_user_id):
+    """Only the author may edit a post's text (admins can delete, not edit)."""
+    return bool(viewer) and viewer["id"] == post_user_id
+
+
 def can_manage_post(viewer, post_user_id):
-    """Author or admin may edit text or delete."""
+    """Show the post menu at all: author or admin (delete)."""
     return can_delete_post(viewer, post_user_id)
 
 def init_db():
@@ -850,6 +855,31 @@ def toggle_reaction(kind, target_id):
     return redirect(back.split("#")[0] + anchor)
 
 
+@app.route("/reactions/<kind>/<int:target_id>")
+def who_reacted(kind, target_id):
+    """Who reacted with what on a post or board post (any logged-in member)."""
+    viewer = require_user()
+    if not viewer:
+        return jsonify({"ok": False, "error": "login required"}), 401
+    table = REACTION_TARGETS.get(kind)
+    db = get_db()
+    if not table or not db.execute(f"SELECT 1 FROM {table} WHERE id = ?", (target_id,)).fetchone():
+        return jsonify({"ok": False, "error": "not found"}), 404
+    rows = db.execute(
+        "SELECT r.emoji, r.created_at, u.username FROM reactions r LEFT JOIN users u ON u.id = r.user_id "
+        "WHERE r.target_type = ? AND r.target_id = ? ORDER BY r.created_at, r.id",
+        (kind, target_id),
+    ).fetchall()
+    by = {}
+    for r in rows:
+        by.setdefault(r["emoji"], []).append({"username": r["username"], "at": r["created_at"]})
+    groups = [{"emoji": e, "label": rx_label(e), "people": by[e]} for e in REACTION_EMOJIS if e in by]
+    html = render_template("_who_reacted.html", groups=groups)
+    return jsonify({"ok": True, "html": html,
+                    "groups": [{"emoji": g["emoji"], "label": g["label"],
+                                "users": [x["username"] for x in g["people"]]} for g in groups]})
+
+
 def _cheek_squeak_context(db, viewer):
     """Banner data: last completed week's winner + this week's leader so far."""
     award = ensure_weekly_award(db)
@@ -1032,6 +1062,8 @@ def _feed_page(db, viewer, viewer_admin, cur):
         "self_reacted": bool(r["self_reacted_at"]),
         "can_pin": False,
         "can_manage": can_delete_board_post(viewer, r),
+        "can_edit": False,
+        "can_delete": can_delete_board_post(viewer, r),
     } for r in board_rows]
     merged = sorted(posts + boards, key=lambda p: (p["created_at"] or "", p["kind"], p["id"]), reverse=True)
     page = merged[:FEED_PAGE]
@@ -1052,6 +1084,8 @@ def _post_item(row, viewer, viewer_admin):
         "self_reacted": bool(row["self_reacted_at"]),
         "can_pin": can_pin_post(viewer, row["user_id"], viewer_admin),
         "can_manage": can_manage_post(viewer, row["user_id"]),
+        "can_edit": can_edit_post(viewer, row["user_id"]),
+        "can_delete": can_delete_post(viewer, row["user_id"]),
     }
 
 
@@ -1438,9 +1472,8 @@ def edit_post(post_id):
     if not post:
         flash("That post is gone.")
         return redirect(url_for("index"))
-    if not can_manage_post(viewer, post["user_id"]):
-        flash("You can only edit your own posts.")
-        return redirect(url_for("index"))
+    if not can_edit_post(viewer, post["user_id"]):
+        return render_template("forbidden.html", message="You can only edit your own posts."), 403
 
     if request.method == "POST":
         content = request.form.get("content", "").strip()
@@ -1555,6 +1588,8 @@ def user_profile(username):
             "created_at": post["created_at"],
             "audio_path": post["audio_path"],
             "can_manage": is_owner or viewer_admin,
+            "can_edit": is_owner,
+            "can_delete": is_owner or viewer_admin,
             "pinned": bool(post["pinned_at"]),
             "self_reacted": bool(post["self_reacted_at"]),
             "can_pin": can_pin_post(viewer, profile["id"], viewer_admin),
