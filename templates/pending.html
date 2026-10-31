@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Application pending - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card pending-card" style="text-align:center;">
+    <div class="pending-ico" aria-hidden="true">👃🧀</div>
+    <h1 class="profile-name" style="margin-top:0">Your application is being sniffed</h1>
+    {% if username %}<p>Hang tight, <strong>{{ username }}</strong>. An admin is giving it a good whiff.</p>{% else %}<p>Hang tight. An admin is giving it a good whiff.</p>{% endif %}
+    <p class="muted">You'll get in as soon as an admin approves you. We don't send emails, so check back later and log in again. Once you're approved, you go straight to The Back Draft.</p>
+    <p class="muted">Holding it in won't make it go faster. 💨</p>
+    {% if username %}<a class="btn-secondary" href="{{ url_for('logout') }}">Log out</a>{% else %}<a class="btn-secondary" href="{{ url_for('login') }}">Log in</a>{% endif %}
+</div>
+{% endblock %}

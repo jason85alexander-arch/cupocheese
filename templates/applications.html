@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Applications - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h1 class="profile-name" style="margin-top:0">📝 Applications ({{ apps|length }})</h1>
+    <p class="muted">Admins only. Approve to let them in, or reject to delete the application and free up the username and email.</p>
+    <a class="btn-secondary" href="{{ url_for('people') }}">← People</a>
+</div>
+{% if apps %}
+{% for a in apps %}
+<div class="card app-row" id="app-{{ a.id }}">
+    <div class="app-head"><strong class="people-name">{{ a.username }}</strong> <span class="muted">· applied {{ a.created_at|ct_time }}</span></div>
+    <dl class="app-meta">
+        <dt>Real name</dt><dd>{{ a.first_name }} {{ a.last_name }}</dd>
+        <dt>Email</dt><dd>{{ a.email }}</dd>
+        <dt>Who told them</dt><dd>{{ a.referred_by }}</dd>
+    </dl>
+    <div class="app-actions">
+        <form method="post" action="{{ url_for('application_decide', user_id=a.id, action='approve') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="app-approve">✅ Approve</button>
+        </form>
+        <form method="post" action="{{ url_for('application_decide', user_id=a.id, action='reject') }}" onsubmit="return confirm('Reject {{ a.username }}? Their application gets deleted.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="app-reject menu-danger">🚫 Reject</button>
+        </form>
+    </div>
+</div>
+{% endfor %}
+{% else %}
+<div class="card"><p class="muted" style="margin:0">No applications right now. The air is clear. 🌬️</p></div>
+{% endif %}
+{% endblock %}

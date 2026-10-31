@@ -26,10 +26,12 @@
             <a href="{% if session.user_id %}{{ url_for('index') }}{% else %}{{ url_for('login') }}{% endif %}">🧀 Cup O' Cheese</a>
         </div>
         <nav class="sidebar-nav">
-            {% if session.user_id %}
+            {% if session.user_id and viewer_pending %}
+                <a href="{{ url_for('logout') }}"><span class="nav-ico" aria-hidden="true">🚪</span><span class="nav-label">Log out</span><span class="nav-short" aria-hidden="true">Log out</span></a>
+            {% elif session.user_id %}
                 <a href="{{ url_for('welcome') }}" class="{% if ep == 'welcome' %}nav-active{% endif %}"{% if ep == 'welcome' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👋</span><span class="nav-label">Welcome</span><span class="nav-short" aria-hidden="true">Welcome</span></a>
                 <a href="{{ url_for('index') }}" class="{% if ep == 'index' %}nav-active{% endif %}"{% if ep == 'index' %} aria-current="page"{% endif %} aria-label="The Back Draft{% if unread_back_draft %} ({{ unread_back_draft }} new){% endif %}"><span class="nav-ico" aria-hidden="true">💨{% if unread_back_draft %}<span class="notif-badge notif-badge-ico bd-badge">{{ unread_back_draft if unread_back_draft < 100 else '99+' }}</span>{% endif %}</span><span class="nav-label nav-label-bd">The Back Draft{% if unread_back_draft %} <span class="notif-badge bd-badge">{{ unread_back_draft if unread_back_draft < 100 else '99+' }}</span>{% endif %}</span><span class="nav-short" aria-hidden="true">Back Draft</span></a>
-                <a href="{{ url_for('people') }}" class="{% if ep == 'people' %}nav-active{% endif %}"{% if ep == 'people' %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">👥</span><span class="nav-label">People</span><span class="nav-short" aria-hidden="true">People</span></a>
+                <a href="{{ url_for('people') }}" class="{% if ep == 'people' %}nav-active{% endif %}"{% if ep == 'people' %} aria-current="page"{% endif %}{% if pending_applications %} aria-label="People ({{ pending_applications }} applications waiting)"{% endif %}><span class="nav-ico" aria-hidden="true">👥{% if pending_applications %}<span class="notif-badge notif-badge-ico app-badge">{{ pending_applications }}</span>{% endif %}</span><span class="nav-label">People{% if pending_applications %} <span class="notif-badge app-badge" title="Applications waiting">{{ pending_applications }}</span>{% endif %}</span><span class="nav-short" aria-hidden="true">People</span></a>
                 <a href="{{ url_for('notifications_page') }}" class="nav-notif{% if ep == 'notifications_page' %} nav-active{% endif %}"{% if ep == 'notifications_page' %} aria-current="page"{% endif %} aria-label="Notifications{% if unread_notifications %} ({{ unread_notifications }} unread){% endif %}"><span class="nav-ico" aria-hidden="true">🔔{% if unread_notifications %}<span class="notif-badge notif-badge-ico">{{ unread_notifications if unread_notifications < 100 else '99+' }}</span>{% endif %}</span><span class="nav-label">Notifications{% if unread_notifications %} <span class="notif-badge">{{ unread_notifications if unread_notifications < 100 else '99+' }}</span>{% endif %}</span><span class="nav-short" aria-hidden="true">Alerts</span></a>
                 <a href="{{ url_for('me') }}" class="{% if on_own_profile %}nav-active{% endif %}"{% if on_own_profile %} aria-current="page"{% endif %}><span class="nav-ico" aria-hidden="true">🧀</span><span class="nav-label">{{ session.username }}{{ admin_badge(session.username) }}</span><span class="nav-short" aria-hidden="true">Me</span></a>
                 {% if viewer_is_admin() %}
@@ -39,7 +41,7 @@
                 <a class="nav-muted" href="{{ url_for('logout') }}"><span class="nav-ico" aria-hidden="true">🚪</span><span class="nav-label">Logout</span><span class="nav-short" aria-hidden="true">Logout</span></a>
             {% else %}
                 <a href="{{ url_for('login') }}" class="{% if ep == 'login' %}nav-active{% endif %}"><span class="nav-ico" aria-hidden="true">🔑</span><span class="nav-label">Login</span><span class="nav-short" aria-hidden="true">Login</span></a>
-                <a href="{{ url_for('register') }}" class="{% if ep == 'register' %}nav-active{% endif %}"><span class="nav-ico" aria-hidden="true">🎟️</span><span class="nav-label">Register</span><span class="nav-short" aria-hidden="true">Register</span></a>
+                <a href="{{ url_for('apply') }}" class="{% if ep in ('apply', 'register') %}nav-active{% endif %}"><span class="nav-ico" aria-hidden="true">📝</span><span class="nav-label">Apply to join</span><span class="nav-short" aria-hidden="true">Join</span></a>
             {% endif %}
         </nav>
     </aside>

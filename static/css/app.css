@@ -335,3 +335,14 @@ img, audio, video { max-width: 100%; }
 .who-e .rx-img { width: 22px; height: 22px; }
 .who-n { font-size: 12px; font-weight: 600; color: #7a6a55; min-width: 16px; padding-top: 3px; }
 .who-names { flex: 1; line-height: 1.5; word-break: break-word; }
+.hp-field { position: absolute !important; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.people-admin-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.pending-ico { font-size: 44px; margin-bottom: 6px; }
+.app-head { margin-bottom: 6px; }
+.app-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 10px; font-size: 14px; }
+.app-meta dt { color: #7a6a55; font-weight: 600; }
+.app-meta dd { margin: 0; word-break: break-word; }
+.app-actions { display: flex; gap: 8px; }
+.app-actions form { flex: 1; margin: 0; }
+.app-actions button { width: 100%; }
+.app-reject { background: #fff !important; color: #b3261e !important; border: 1px solid #e3b7b2 !important; }

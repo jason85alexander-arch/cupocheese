@@ -8,7 +8,7 @@
     {% elif invite_bad_msg %}
     <p class="field-error" style="margin:0 0 12px;">{{ invite_bad_msg }}</p>
     {% else %}
-    <p style="color:#7a6a55;font-size:14px;">Signups are invite-only right now. Got an invite link? Just open it.</p>
+    <p style="color:#7a6a55;font-size:14px;">Got an invite link? Just open it. No invite? <a href="{{ url_for('apply') }}">Apply to join</a>.</p>
     {% endif %}
     <form method="post" id="register-form" action="{{ url_for('register') }}">
         {% if invite_status == 'pending' %}

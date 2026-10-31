@@ -1,6 +1,6 @@
 /* Cup O' Cheese service worker: caches static assets + an offline page only.
    Pages are network-first and never stored; audio, avatars, and POSTs pass straight through. */
-const VERSION = "coc-v4";
+const VERSION = "coc-v5";
 const STATIC_CACHE = VERSION + "-static";
 const PRECACHE = [
   "/offline",

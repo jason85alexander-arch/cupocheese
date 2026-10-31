@@ -298,6 +298,58 @@ def _require_real_name():
     return redirect(target)
 
 
+# Pending applicants may sign in but only see the waiting screen.
+PENDING_ALLOWED = {"pending_page", "logout", "login", "static", "healthz", "service_worker",
+                   "pwa_manifest", "offline", "forgot_password", "reset_password", "add_name"}
+
+
+def is_pending(user):
+    try:
+        return (user["status"] or "approved") == "pending"
+    except (KeyError, IndexError, TypeError):
+        return False
+
+
+@app.before_request
+def _gate_pending():
+    if request.endpoint in PENDING_ALLOWED or request.endpoint is None:
+        return None
+    uid = session.get("user_id")
+    if not uid:
+        return None
+    try:
+        row = get_db().execute("SELECT status FROM users WHERE id = ?", (uid,)).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None or not is_pending(row):
+        return None
+    if _wants_json() or request.method != "GET":
+        return jsonify({"ok": False, "error": "application pending", "redirect": url_for("pending_page")}), 403
+    return redirect(url_for("pending_page"))
+
+
+def pending_count(db=None):
+    db = db or get_db()
+    try:
+        return db.execute("SELECT COUNT(*) FROM users WHERE status = 'pending'").fetchone()[0]
+    except sqlite3.Error:
+        return 0
+
+
+@app.context_processor
+def _inject_pending():
+    viewer_pending = False
+    uid = session.get("user_id")
+    if uid:
+        try:
+            row = get_db().execute("SELECT status FROM users WHERE id = ?", (uid,)).fetchone()
+            viewer_pending = bool(row) and is_pending(row)
+        except sqlite3.Error:
+            pass
+    return {"pending_applications": pending_count() if _viewer_is_admin() else 0,
+            "viewer_pending": viewer_pending}
+
+
 def _viewer_is_admin():
     """Is the signed-in viewer an admin? (fresh from DB each request)"""
     cached = getattr(g, "_viewer_admin", None)
@@ -405,6 +457,8 @@ def _init_db_locked(db):
             ("first_name", "TEXT"),
             ("last_name", "TEXT"),
             ("username_changed_at", "TEXT"),
+            ("status", "TEXT NOT NULL DEFAULT 'approved'"),
+            ("referred_by", "TEXT"),
         ):
             if col not in cols:
                 db.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
@@ -414,7 +468,7 @@ def _init_db_locked(db):
             (datetime.utcnow().isoformat(),),
         )
         # Join-order member numbers (#1 = first account). Assigned once, never renumbered.
-        for r in db.execute("SELECT id FROM users WHERE member_no IS NULL ORDER BY id").fetchall():
+        for r in db.execute("SELECT id FROM users WHERE member_no IS NULL AND COALESCE(status, 'approved') = 'approved' ORDER BY id").fetchall():
             nxt = db.execute("SELECT COALESCE(MAX(member_no), 0) + 1 FROM users").fetchone()[0]
             db.execute("UPDATE users SET member_no = ? WHERE id = ?", (nxt, r["id"]))
         # Promote owner: first user (id=1) or sole remaining user if no admin yet
@@ -427,6 +481,15 @@ def _init_db_locked(db):
             ).fetchone()
             if first:
                 db.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (first["id"],))
+        # Public applications: per-IP attempt log for rate limiting.
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS apply_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip TEXT NOT NULL,
+                at TEXT NOT NULL
+            )
+        """)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_apply_attempts_ip ON apply_attempts (ip, at)")
         # Old usernames (so /u/<old name> links redirect after a rename).
         db.execute("""
             CREATE TABLE IF NOT EXISTS username_history (
@@ -1274,6 +1337,166 @@ def register():
         invite_bad_msg=INVITE_BAD_MSG.get(status) if status and status != "pending" else None,
     )
 
+# ---------------- Public applications (admin approval) ----------------
+from itsdangerous import URLSafeSerializer, BadSignature
+
+APPLY_MIN_SECONDS = 3
+APPLY_RATE_LIMIT = 5          # per IP ...
+APPLY_RATE_WINDOW = 3600      # ... per hour
+REFERRED_MAX_CHARS = 120
+_apply_signer = URLSafeSerializer(app.secret_key, salt="apply-form-ts")
+
+
+def client_ip():
+    """Render puts the real client first in X-Forwarded-For."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    first = xff.split(",")[0].strip() if xff else ""
+    return first or request.remote_addr or "?"
+
+
+def csrf_token():
+    tok = session.get("_csrf")
+    if not tok:
+        tok = session["_csrf"] = secrets.token_urlsafe(24)
+    return tok
+
+
+def csrf_ok():
+    tok = session.get("_csrf")
+    return bool(tok) and secrets.compare_digest(tok, request.form.get("csrf_token", ""))
+
+
+app.jinja_env.globals["csrf_token"] = csrf_token
+
+
+def _apply_form(**ctx):
+    ctx.setdefault("form", {})
+    return render_template("apply.html", form_ts=_apply_signer.dumps(time.time()),
+                           referred_max=REFERRED_MAX_CHARS, **ctx)
+
+
+@app.route("/apply", methods=["GET", "POST"])
+def apply():
+    if session.get("user_id") and require_user():
+        return redirect(url_for("index"))
+    if request.method == "GET":
+        return _apply_form()
+    db = get_db()
+    f = request.form
+    # Honeypot: humans never see it. Pretend success, store nothing.
+    if (f.get("website") or "").strip():
+        return redirect(url_for("apply_sent"))
+    ip = client_ip()
+    since = (_now_utc() - timedelta(seconds=APPLY_RATE_WINDOW)).isoformat()
+    n = db.execute("SELECT COUNT(*) FROM apply_attempts WHERE ip = ? AND at > ?", (ip, since)).fetchone()[0]
+    if n >= APPLY_RATE_LIMIT:
+        return _apply_form(error="Whoa, that's a lot of gas from one spot. Try again in an hour.", form=f), 429
+    db.execute("INSERT INTO apply_attempts (ip, at) VALUES (?, ?)", (ip, _now_utc().isoformat()))
+    db.execute("DELETE FROM apply_attempts WHERE at < ?",
+               ((_now_utc() - timedelta(days=1)).isoformat(),))
+    db.commit()
+    try:
+        started = float(_apply_signer.loads(f.get("ts", "")))
+    except (BadSignature, TypeError, ValueError):
+        started = None
+    if started is None or time.time() - started < APPLY_MIN_SECONDS:
+        return _apply_form(error="That was suspiciously fast. Give it another go.", form=f), 400
+    username = (f.get("username") or "").strip()
+    email = (f.get("email") or "").strip().lower()
+    password = f.get("password", "")
+    first_name = clean_name(f.get("first_name"))
+    last_name = clean_name(f.get("last_name"))
+    referred = " ".join((f.get("referred_by") or "").split())[:REFERRED_MAX_CHARS]
+    err = None
+    if not username or not email or not password:
+        err = "Username, email, and password required"
+    elif not first_name or not last_name:
+        err = "First and last name required (only admins can see them)."
+    elif not referred:
+        err = "Tell us who told you about Cup O' Cheese."
+    elif "@" not in email or "." not in email.split("@")[-1]:
+        err = "Enter a valid email address"
+    elif password != f.get("password_confirm", ""):
+        err = "Passwords must match"
+    else:
+        err = username_error(db, username)
+        if not err and db.execute("SELECT 1 FROM users WHERE lower(email) = lower(?)", (email,)).fetchone():
+            err = "Email already registered"
+    if err:
+        return _apply_form(error=err, form=f), 400
+    now = _now_utc().isoformat()
+    try:
+        cur = db.execute(
+            "INSERT INTO users (username, email, password_hash, created_at, is_admin, member_no, back_draft_seen_at, "
+            "first_name, last_name, status, referred_by) VALUES (?, ?, ?, ?, 0, NULL, ?, ?, ?, 'pending', ?)",
+            (username, email, generate_password_hash(password), now, now, first_name, last_name, referred))
+        db.commit()
+    except sqlite3.IntegrityError as e:
+        db.rollback()
+        return _apply_form(error="Email already registered" if "email" in str(e).lower() else "Username already taken", form=f), 400
+    session.clear()
+    session["user_id"] = cur.lastrowid
+    session["username"] = username
+    return redirect(url_for("pending_page"))
+
+
+@app.route("/apply/sent")
+def apply_sent():
+    return render_template("pending.html", username=None)
+
+
+@app.route("/pending")
+def pending_page():
+    user = require_user()
+    if not user:
+        return redirect(url_for("login"))
+    if not is_pending(user):
+        return redirect(url_for("welcome"))
+    return render_template("pending.html", username=user["username"])
+
+
+@app.route("/applications")
+def applications_page():
+    viewer, resp = require_admin()
+    if resp:
+        return resp
+    rows = get_db().execute(
+        "SELECT id, username, first_name, last_name, email, referred_by, created_at FROM users "
+        "WHERE status = 'pending' ORDER BY created_at, id").fetchall()
+    return render_template("applications.html", apps=rows)
+
+
+@app.route("/applications/<int:user_id>/<action>", methods=["POST"])
+def application_decide(user_id, action):
+    viewer, resp = require_admin()
+    if resp:
+        return resp
+    if action not in ("approve", "reject"):
+        abort(404)
+    if not csrf_ok():
+        flash("That form went stale. Try again.")
+        return redirect(url_for("applications_page"))
+    db = get_db()
+    row = db.execute("SELECT id, username FROM users WHERE id = ? AND status = 'pending'", (user_id,)).fetchone()
+    if not row:
+        flash("That application was already handled.")
+        return redirect(url_for("applications_page"))
+    if action == "approve":
+        now = _now_utc().isoformat()
+        db.execute(
+            "UPDATE users SET status = 'approved', back_draft_seen_at = ?, "
+            "member_no = (SELECT COALESCE(MAX(member_no), 0) + 1 FROM users) WHERE id = ? AND status = 'pending'",
+            (now, user_id))
+        flash(f"✅ {row['username']} is in. Welcome to the Cup!")
+    else:
+        # Free the username + email: drop the pending account entirely (it never posted anything).
+        db.execute("DELETE FROM notifications WHERE user_id = ? OR actor_id = ?", (user_id, user_id))
+        db.execute("DELETE FROM users WHERE id = ? AND status = 'pending'", (user_id,))
+        flash(f"🚫 Rejected {row['username']}. Their username and email are free again.")
+    db.commit()
+    return redirect(url_for("applications_page"))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -1284,7 +1507,7 @@ def login():
         if user and check_password_hash(user["password_hash"], password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
-            return redirect(url_for("welcome"))
+            return redirect(url_for("pending_page" if is_pending(user) else "welcome"))
         flash("Invalid username or password")
     return render_template("login.html")
 
@@ -1566,7 +1789,7 @@ def user_profile(username):
     if not viewer:
         return redirect(url_for("login"))
     db = get_db()
-    profile = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    profile = db.execute("SELECT * FROM users WHERE username = ? AND COALESCE(status, 'approved') = 'approved'", (username,)).fetchone()
     if not profile:
         moved = db.execute(
             "SELECT u.username FROM username_history h JOIN users u ON u.id = h.user_id "
@@ -1715,7 +1938,7 @@ def board_post(username):
     if not viewer:
         return redirect(url_for("login"))
     db = get_db()
-    owner = db.execute("SELECT id, username FROM users WHERE username = ?", (username,)).fetchone()
+    owner = db.execute("SELECT id, username FROM users WHERE username = ? AND COALESCE(status, 'approved') = 'approved'", (username,)).fetchone()
     if not owner:
         flash("No member by that name.")
         return redirect(url_for("people"))
@@ -1795,6 +2018,7 @@ def people():
         """
         SELECT id, username, avatar_path, created_at
         FROM users
+        WHERE COALESCE(status, 'approved') = 'approved'
         ORDER BY lower(username) ASC
         """
     ).fetchall()
@@ -1814,6 +2038,7 @@ def people():
         "people.html",
         members=members,
         viewer_admin=viewer_admin,
+        pending_n=pending_count(db) if viewer_admin else 0,
         username=session.get("username"),
     )
 

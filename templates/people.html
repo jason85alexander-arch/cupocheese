@@ -3,9 +3,12 @@
 {% block content %}
 <div class="card">
     <h1 class="profile-name" style="margin-top:0">People</h1>
-    <p class="muted">The cup's invite-only crew. Peek a friend's profile.</p>
+    <p class="muted">The Cup's crew. Peek a friend's profile.</p>
     {% if viewer_admin %}
+    <div class="people-admin-btns">
+    <a class="btn-secondary" href="{{ url_for('applications_page') }}">📝 Applications{% if pending_n %} <span class="notif-badge">{{ pending_n }}</span>{% else %} (0){% endif %}</a>
     <a class="btn-secondary" href="{{ url_for('invites_page') }}">🎟️ Invite someone</a>
+    </div>
     {% endif %}
 </div>
 

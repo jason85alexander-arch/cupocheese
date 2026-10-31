@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Apply - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card">
+    <h2>Apply to Cup O' Cheese</h2>
+    <p style="color:#7a6a55;font-size:14px;">No invite? No problem. Tell us who sent you, and an admin will give your application a sniff.</p>
+    {% if error %}<p class="field-error" style="margin:0 0 12px;">{{ error }}</p>{% endif %}
+    <form method="post" id="register-form" action="{{ url_for('apply') }}">
+        <input type="hidden" name="ts" value="{{ form_ts }}">
+        <div class="hp-field" aria-hidden="true"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+        <input type="text" name="username" placeholder="Choose a username" required minlength="2" maxlength="30" pattern="[A-Za-z0-9_.\-]+" title="2–30 letters, numbers, underscores, dots, or dashes (no spaces)" autocomplete="username" autocapitalize="off" spellcheck="false" value="{{ form.get('username', '') }}">
+        <div class="name-fields">
+            <div class="name-row">
+                <input type="text" name="first_name" placeholder="First name" required maxlength="{{ name_max }}" autocomplete="given-name" autocapitalize="words" aria-label="First name" value="{{ form.get('first_name', '') }}">
+                <input type="text" name="last_name" placeholder="Last name" required maxlength="{{ name_max }}" autocomplete="family-name" autocapitalize="words" aria-label="Last name" value="{{ form.get('last_name', '') }}">
+            </div>
+            <p class="name-note">{{ name_note }}</p>
+        </div>
+        <input type="email" name="email" placeholder="Email" required autocomplete="email" value="{{ form.get('email', '') }}">
+        <label for="referred_by" class="invite-label">Who told you about Cup O' Cheese?</label>
+        <input type="text" id="referred_by" name="referred_by" placeholder="A friend's name or username" required maxlength="{{ referred_max }}" value="{{ form.get('referred_by', '') }}">
+        <div class="password-field">
+            <input type="password" name="password" id="password" placeholder="Password" required autocomplete="new-password">
+            <button type="button" class="toggle-password" data-target="password" aria-label="Show password">Show</button>
+        </div>
+        <div class="password-field">
+            <input type="password" name="password_confirm" id="password_confirm" placeholder="Confirm password" required autocomplete="new-password">
+            <button type="button" class="toggle-password" data-target="password_confirm" aria-label="Show password">Show</button>
+        </div>
+        <p id="password-mismatch" class="field-error" hidden>Passwords must match.</p>
+        <button type="submit">💨 Send my application</button>
+    </form>
+    <p>Got an invite link? Just open it. <a href="{{ url_for('register') }}">Have an invite code?</a></p>
+    <p>Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+</div>
+<script>
+(function () {
+  var form = document.getElementById("register-form");
+  var password = document.getElementById("password");
+  var confirm = document.getElementById("password_confirm");
+  var mismatch = document.getElementById("password-mismatch");
+
+  function passwordsMatch() {
+    return password.value === confirm.value;
+  }
+
+  function updateMismatch() {
+    var bad = confirm.value.length > 0 && !passwordsMatch();
+    mismatch.hidden = !bad;
+    confirm.setCustomValidity(bad ? "Passwords must match." : "");
+  }
+
+  password.addEventListener("input", updateMismatch);
+  confirm.addEventListener("input", updateMismatch);
+
+  form.addEventListener("submit", function (e) {
+    form.querySelectorAll('input[name="first_name"], input[name="last_name"]').forEach(function (el) {
+      el.value = el.value.trim();
+    });
+    if (!form.checkValidity()) { e.preventDefault(); form.reportValidity(); return; }
+    updateMismatch();
+    if (!passwordsMatch()) {
+      e.preventDefault();
+      mismatch.hidden = false;
+      confirm.focus();
+    }
+  });
+
+  document.querySelectorAll(".toggle-password").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var input = document.getElementById(btn.getAttribute("data-target"));
+      if (!input) return;
+      var showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      btn.textContent = showing ? "Show" : "Hide";
+      btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+    });
+  });
+})();
+</script>
+{% endblock %}
