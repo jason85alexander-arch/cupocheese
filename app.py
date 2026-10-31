@@ -5,7 +5,7 @@ import hashlib
 import threading
 import time
 from flask import Flask, has_app_context, render_template, request, redirect, url_for, session, flash, send_from_directory, g, jsonify, get_template_attribute, abort
-from markupsafe import Markup
+from markupsafe import Markup, escape
 import json
 import re
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -520,7 +520,9 @@ def _init_db_locked(db):
         """)
         db.commit()  # schema ready
 
-REACTION_EMOJIS = ["😷", "☠️", "🦨", "🎺", "🚀", "😂", "👏", "🏆", "🫡", "🤌", "🐐", "👀"]
+REACTION_EMOJIS = ["😷", "☠️", "🦨", "🎺", "🚀", "😂", "👏", "🏆", "🫡", "🤌", "🐐", "👀", "wet_one"]
+# Custom image reactions: stored key -> (label, static image path). Rendered as <img> via rx_glyph.
+CUSTOM_REACTIONS = {"wet_one": ("Wet one", "rx/wet_one-v1-64.png")}
 REACTION_TARGETS = {"post": "posts", "board": "board_posts"}
 
 
@@ -2081,6 +2083,25 @@ def static_v(filename):
 
 
 app.jinja_env.globals["static_v"] = static_v
+
+
+def rx_glyph(key):
+    """A reaction as HTML: the emoji itself, or an inline <img> for custom image reactions."""
+    custom = CUSTOM_REACTIONS.get(key)
+    if not custom:
+        return escape(key or "")
+    label, path = custom
+    return Markup('<img class="rx-img" src="%s" alt="%s" title="%s" width="64" height="64">') % (
+        static_v(path), label, label)
+
+
+def rx_label(key):
+    custom = CUSTOM_REACTIONS.get(key)
+    return custom[0] if custom else (key or "")
+
+
+app.jinja_env.globals["rx_glyph"] = rx_glyph
+app.jinja_env.globals["rx_label"] = rx_label
 
 
 @app.after_request

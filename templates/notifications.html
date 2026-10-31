@@ -9,9 +9,9 @@
         <li class="notif-item{% if n.unread %} unread{% endif %}">
             <a href="{{ n.link }}">
                 {% if n.kind == 'reaction' %}
-                <span class="notif-ico" aria-hidden="true">{{ n.emojis[0] if n.emojis else '💨' }}</span>
+                <span class="notif-ico" aria-hidden="true">{{ rx_glyph(n.emojis[0]) if n.emojis else '💨' }}</span>
                 <span class="notif-text">
-                    <strong>{{ n.actor }}</strong> {{ n.emojis|join('') }}'d your {{ 'Cheese Board post' if n.target_type == 'board' else 'toot' }}
+                    <strong>{{ n.actor }}</strong> {% for e in n.emojis %}{{ rx_glyph(e) }}{% endfor %}'d your {{ 'Cheese Board post' if n.target_type == 'board' else 'toot' }}
                     {% if n.snippet %}<span class="notif-snippet">“{{ n.snippet }}”</span>{% endif %}
                 {% elif n.kind == 'board_post' %}
                 <span class="notif-ico" aria-hidden="true">🧀</span>

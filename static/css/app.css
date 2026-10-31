@@ -320,3 +320,6 @@ img, audio, video { max-width: 100%; }
 .name-row input { flex: 1 1 0; min-width: 0; }
 .name-note { margin: -4px 0 12px; padding: 6px 10px; background: #fff3d6; border: 1px dashed #e0a030; border-radius: 6px; color: #7a5a20; font-size: 13px; line-height: 1.35; }
 .real-name { display: block; color: #7a6a55; font-size: 13px; font-weight: 400; margin: 2px 0 0; }
+
+/* Custom image reactions sit on the emoji line, same height as emoji glyphs */
+.rx-img { width: 1.2em; height: 1.2em; vertical-align: -0.25em; display: inline-block; object-fit: contain; }
