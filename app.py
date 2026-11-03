@@ -2309,6 +2309,114 @@ def set_admin(username):
     return redirect(back)
 
 
+def removal_block_reason(db, target, viewer):
+    """Why an admin can't remove this member, or None if they can."""
+    if viewer is not None and target["id"] == viewer["id"]:
+        return "You can't remove yourself."
+    if target["id"] == owner_user_id(db):
+        return "The owner can't be removed."
+    if (target["username"] or "").strip().lower() in _admin_usernames():
+        return f"{target['username']} is an admin via the CUPOCHEESE_ADMINS setting on Render. Remove them there first."
+    return None
+
+
+def delete_member(db, uid):
+    """Permanently delete a member and everything they posted, in one transaction.
+    Returns the list of upload filenames to unlink after commit."""
+    q = lambda sql, a=(): db.execute(sql, a).fetchall()
+    user = db.execute("SELECT avatar_path FROM users WHERE id = ?", (uid,)).fetchone()
+    post_ids = [r[0] for r in q("SELECT id FROM posts WHERE user_id = ?", (uid,))]
+    board_rows = q("SELECT id, audio_path FROM board_posts WHERE author_id = ? OR board_user_id = ?", (uid, uid))
+    board_ids = [r[0] for r in board_rows]
+    files = [r[0] for r in q("SELECT audio_path FROM posts WHERE user_id = ? AND audio_path IS NOT NULL", (uid,))]
+    files += [r[1] for r in board_rows if r[1]]
+    if user and user["avatar_path"]:
+        files.append(user["avatar_path"])
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        for kind, ids in (("post", post_ids), ("board", board_ids)):
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                marks = ",".join("?" * len(chunk))
+                db.execute(f"DELETE FROM reactions WHERE target_type = ? AND target_id IN ({marks})", (kind, *chunk))
+                db.execute(f"DELETE FROM notifications WHERE target_type = ? AND target_id IN ({marks})", (kind, *chunk))
+                db.execute(f"DELETE FROM awards WHERE target_type = ? AND post_id IN ({marks})", (kind, *chunk))
+                if kind == "post":
+                    for col in ("top1_post_id", "top2_post_id", "top3_post_id"):
+                        db.execute(f"UPDATE users SET {col} = NULL WHERE {col} IN ({marks})", chunk)
+        db.execute("DELETE FROM reactions WHERE user_id = ?", (uid,))
+        db.execute("DELETE FROM notifications WHERE user_id = ? OR actor_id = ?", (uid, uid))
+        db.execute("DELETE FROM awards WHERE user_id = ?", (uid,))
+        db.execute("DELETE FROM board_posts WHERE author_id = ? OR board_user_id = ?", (uid, uid))
+        db.execute("DELETE FROM posts WHERE user_id = ?", (uid,))
+        db.execute("DELETE FROM username_history WHERE user_id = ?", (uid,))
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='acct_links'").fetchone():
+            db.execute("DELETE FROM acct_links WHERE uid = ?", (uid,))
+        # Invites they made stay as history; unused ones die with them.
+        now = _now_utc().isoformat()
+        db.execute("UPDATE invites SET revoked_at = ? WHERE created_by = ? AND used_at IS NULL AND revoked_at IS NULL", (now, uid))
+        db.execute("UPDATE invites SET created_by = NULL WHERE created_by = ?", (uid,))
+        db.execute("UPDATE invites SET used_by = NULL WHERE used_by = ?", (uid,))
+        db.execute("UPDATE invites SET revoked_by = NULL WHERE revoked_by = ?", (uid,))
+        db.execute("DELETE FROM users WHERE id = ?", (uid,))
+        db.execute("COMMIT")
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
+    with _AWARD_LOCK:
+        _AWARD_CACHE.clear()
+    return files
+
+
+def _unlink_uploads(names):
+    for name in names:
+        safe = secure_filename(name or "")
+        if not safe or safe != name:
+            continue
+        try:
+            os.remove(os.path.join(UPLOAD_FOLDER, safe))
+        except OSError:
+            pass
+
+
+@app.route("/u/<username>/remove", methods=["GET", "POST"])
+def remove_member(username):
+    viewer, resp = require_admin()
+    if resp:
+        return resp
+    db = get_db()
+    target = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if not target:
+        flash("No member by that name.")
+        return redirect(url_for("people"))
+    blocked = removal_block_reason(db, target, viewer)
+    if blocked:
+        flash(blocked)
+        return redirect(url_for("user_profile", username=target["username"]))
+    counts = {
+        "posts": db.execute("SELECT COUNT(*) FROM posts WHERE user_id = ?", (target["id"],)).fetchone()[0],
+        "board": db.execute("SELECT COUNT(*) FROM board_posts WHERE author_id = ? OR board_user_id = ?",
+                            (target["id"], target["id"])).fetchone()[0],
+        "reactions": db.execute("SELECT COUNT(*) FROM reactions WHERE user_id = ?", (target["id"],)).fetchone()[0],
+    }
+    if request.method == "GET":
+        return render_template("remove_member.html", target=target, counts=counts, error=None,
+                               username=session.get("username"))
+    if not csrf_ok():
+        flash("That form went stale. Try again.")
+        return redirect(url_for("remove_member", username=target["username"]))
+    if request.form.get("confirm_username", "").strip() != target["username"]:
+        return render_template("remove_member.html", target=target, counts=counts,
+                               error="That doesn't match. Nothing was deleted.",
+                               username=session.get("username")), 400
+    files = delete_member(db, target["id"])
+    _unlink_uploads(files)
+    flash(f"🗑️ Removed {target['username']} and everything they posted.")
+    return redirect(url_for("people"))
+
+
 def admin_info(db, user_row, viewer):
     """How a member's admin status is set, for admin-only controls."""
     env_admin = (user_row["username"] or "").strip().lower() in _admin_usernames()
@@ -2323,6 +2431,7 @@ def admin_info(db, user_row, viewer):
         "is_self": is_self,
         "can_grant": not (env_admin or db_admin),
         "can_revoke": db_admin and not env_admin and not is_owner and not is_self,
+        "can_remove": not env_admin and not is_owner and not is_self,
     }
 
 

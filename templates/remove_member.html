@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Remove {{ target.username }} - Cup O' Cheese{% endblock %}
+{% block content %}
+<div class="card" style="border:2px solid #a33;">
+    <h1 class="profile-name" style="margin-top:0;color:#a33;">🗑️ Remove {{ target.username }}?</h1>
+    <p>This <strong>permanently deletes</strong> their account and everything they posted. There's no undo.</p>
+    <ul class="muted">
+        <li>{{ counts.posts }} toot{{ '' if counts.posts == 1 else 's' }} in The Back Draft, with their audio</li>
+        <li>{{ counts.board }} Cheese Board toot{{ '' if counts.board == 1 else 's' }} (theirs, and everything on their board)</li>
+        <li>{{ counts.reactions }} reaction{{ '' if counts.reactions == 1 else 's' }} they gave, plus every reaction on their toots</li>
+        <li>Their avatar, notifications, Cheek Squeak wins, and sign-in</li>
+    </ul>
+    {% if error %}<p style="color:#a33;font-weight:bold;">{{ error }}</p>{% endif %}
+    <form method="post" action="{{ url_for('remove_member', username=target.username) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="confirm_username">Type <strong>{{ target.username }}</strong> to confirm:</label>
+        <input id="confirm_username" name="confirm_username" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required
+               style="width:100%;box-sizing:border-box;margin:8px 0 12px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="submit" class="btn-secondary btn-danger" style="cursor:pointer;">Delete {{ target.username }} forever</button>
+            <a class="btn-secondary" href="{{ url_for('user_profile', username=target.username) }}">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

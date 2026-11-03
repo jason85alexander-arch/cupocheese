@@ -21,4 +21,7 @@
             <button type="submit" class="btn-secondary">💩 Make admin</button>
         </form>
     {% endif %}
+    {% if a.can_remove and show_remove %}
+        <a class="btn-secondary btn-danger" href="{{ url_for('remove_member', username=m.username) }}">🗑️ Remove member</a>
+    {% endif %}
 </div>
