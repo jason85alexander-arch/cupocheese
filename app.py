@@ -588,12 +588,12 @@ def _init_db_locked(db):
         """)
         db.commit()  # schema ready
 
-REACTION_EMOJIS = ["😷", "☠️", "🦨", "🎺", "🚀", "😂", "👏", "🏆", "🫡", "🤌", "🐐", "👀", "wet_one", "weak_one", "💪"]
+REACTION_EMOJIS = ["😷", "☠️", "🦨", "🎺", "🚀", "😂", "👏", "🏆", "🫡", "🤌", "🐐", "👀", "wet_one", "weak_one", "💪", "🚽"]
 # Custom image reactions: stored key -> (label, static image path). Rendered as <img> via rx_glyph.
 CUSTOM_REACTIONS = {"wet_one": ("Wet one", "rx/wet_one-v1-64.png"),
                     "weak_one": ("Weak one", "rx/weak_one-v1-64.png")}
 # Plain-emoji reactions with a friendly hover label.
-EMOJI_LABELS = {"💪": "Strong one"}
+EMOJI_LABELS = {"💪": "Strong one", "🚽": "Toilet"}
 REACTION_TARGETS = {"post": "posts", "board": "board_posts"}
 
 
